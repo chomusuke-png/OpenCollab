@@ -7,6 +7,7 @@ import dev.opencollab.core.ot.ClientDocument
 import dev.opencollab.core.ot.TextOperation
 import dev.opencollab.core.presence.PresenceThrottler
 import dev.opencollab.core.protocol.ChatEntry
+import dev.opencollab.core.protocol.Features
 import dev.opencollab.core.protocol.RunTarget
 import dev.opencollab.core.protocol.FileEntry
 import dev.opencollab.core.protocol.FileMutation
@@ -66,6 +67,12 @@ interface ClientHandler {
     fun onRunTargets(targets: List<RunTarget>) {}
     fun onRunResponse(response: Message.RunResponse) {}
 
+    /**
+     * The host IDE's test progress ([Message.ConsoleTests]), debugger state, breakpoints, VCS
+     * status or code style (I/O thread). Only sent for [Features] both sides support.
+     */
+    fun onHostIdeState(message: Message) {}
+
     /** Mirror files changed on disk (I/O thread). [initial] is true for the join snapshot. */
     fun onFilesChanged(paths: Collection<String>, initial: Boolean) {}
     fun onFileRequestFailed(mutation: FileMutation, error: String) {}
@@ -95,6 +102,8 @@ class CollabClient(
     val mirror: MirrorWorkspace?,
     private val reconnectPolicy: ReconnectPolicy? = ReconnectPolicy(),
     presenceIntervalMillis: Long = 0,
+    /** Optional [Features] this participant supports. */
+    private val features: List<String> = Features.ALL,
 ) : AutoCloseable {
     private val inbound = SerialExecutor("opencollab-client")
     private val requestCounter = AtomicLong()
@@ -110,6 +119,9 @@ class CollabClient(
     @Volatile var sessionId: String? = null
         private set
     @Volatile var sharingRules: SharingRules = SharingRules()
+        private set
+    /** [Features] the host offers that we support too (from the latest Welcome). */
+    @Volatile var sharedFeatures: Set<String> = emptySet()
         private set
     @Volatile private var resumeKey: String? = null
     @Volatile private var userClosed = false
@@ -280,6 +292,26 @@ class CollabClient(
     }
 
     /**
+     * Asks the host to run [command] in a shell in its project folder ([Features.COMMANDS]); the
+     * answer arrives through [ClientHandler.onRunResponse]. Null if not possible now.
+     */
+    fun requestCommand(command: String): String? {
+        val clean = command.trim()
+        if (!welcomed || Features.COMMANDS !in sharedFeatures) return null
+        if (clean.isEmpty() || clean.length > MessageCodec.MAX_COMMAND_CHARS || clean.any { it.isISOControl() }) return null
+        val id = "cmd-${requestCounter.incrementAndGet()}"
+        send(Message.CommandRequest(id, clean))
+        return id
+    }
+
+    /** Asks the host to add or remove a line breakpoint ([Features.DEBUG]). False if not possible now. */
+    fun requestBreakpoint(path: String, line: Int, add: Boolean): Boolean {
+        if (!welcomed || Features.DEBUG !in sharedFeatures || !role.canEdit || line < 0) return false
+        send(Message.BreakpointRequest(path, line, add))
+        return true
+    }
+
+    /**
      * Sends a chat message; it shows up through [ClientHandler.onChat] once the host relays it.
      * Returns false (nothing sent) for blank or over-long text or while not connected.
      */
@@ -325,7 +357,7 @@ class CollabClient(
             override fun onMessage(text: String) = inbound.execute { if (connection === conn) receive(text) }
             override fun onClosed(reason: String) = inbound.execute { if (connection === conn) onConnectionLost(reason) }
         })
-        conn.send(MessageCodec.encode(Message.Hello(PROTOCOL_VERSION, displayName, token, resumeKey)))
+        conn.send(MessageCodec.encode(Message.Hello(PROTOCOL_VERSION, displayName, token, resumeKey, features = features)))
     }
 
     private fun onConnectionLost(reason: String) {
@@ -414,6 +446,9 @@ class CollabClient(
             is Message.ConsoleEnded -> handler.onConsoleEnded(m)
             is Message.RunTargets -> handler.onRunTargets(m.targets)
             is Message.RunResponse -> handler.onRunResponse(m)
+            is Message.ConsoleTests, is Message.DebugState, is Message.Breakpoints, is Message.VcsStatus,
+            is Message.CodeStyle,
+            -> handler.onHostIdeState(m)
 
             is Message.Manifest -> onManifest(m)
             is Message.FileChunk -> onFileChunk(m)
@@ -449,6 +484,7 @@ class CollabClient(
         role = w.role
         resumeKey = w.resumeKey
         sharingRules = w.sharing.toRules()
+        sharedFeatures = w.features.toSet() intersect features.toSet()
         synchronized(participants) {
             participants.clear()
             w.participants.forEach { participants[it.id] = it }

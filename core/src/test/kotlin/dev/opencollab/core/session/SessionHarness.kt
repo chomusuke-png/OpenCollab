@@ -53,6 +53,8 @@ class FakeIde(name: String) : ClientHandler {
     override fun onConsoleEnded(ended: Message.ConsoleEnded) { consoleExits[ended.consoleId] = ended.exitCode ?: -1 }
     override fun onRunTargets(targets: List<RunTarget>) { runTargets = targets }
     override fun onRunResponse(response: Message.RunResponse) { runResponses += response }
+    val hostIdeStates = CopyOnWriteArrayList<Message>()
+    override fun onHostIdeState(message: Message) { hostIdeStates += message }
 
     override fun onStateChanged(state: ClientState, detail: String) { states += state; stateDetails += detail }
     override fun applyRemoteEdit(path: String, op: TextOperation) { texts[path] = op.apply(texts.getValue(path)) }
@@ -99,6 +101,8 @@ class Harness(val hostRoot: Path, rules: SharingRules = SharingRules(), config: 
     val links = CopyOnWriteArrayList<InMemoryTransport.MemoryConnection>()
     /** Run requests the host IDE was asked to approve. */
     val runRequests = CopyOnWriteArrayList<RunRequestInfo>()
+    /** Breakpoint requests: participant id, path, line, add. */
+    val breakpointRequests = CopyOnWriteArrayList<List<Any>>()
     private val clients = CopyOnWriteArrayList<CollabClient>()
 
     /** Host documents: unsaved editor text wins over disk; pre-registered with the host bridge. */
@@ -120,6 +124,9 @@ class Harness(val hostRoot: Path, rules: SharingRules = SharingRules(), config: 
         scheduler,
         object : HostSessionListener {
             override fun onRunRequest(request: RunRequestInfo) { runRequests += request }
+            override fun onBreakpointRequest(participantId: String, path: String, line: Int, add: Boolean) {
+                breakpointRequests += listOf(participantId, path, line, add)
+            }
         },
     )
 
@@ -137,6 +144,7 @@ class Harness(val hostRoot: Path, rules: SharingRules = SharingRules(), config: 
         token: String = session.config.editorToken,
         connector: Connector? = null,
         presenceIntervalMillis: Long = 20,
+        features: List<String> = dev.opencollab.core.protocol.Features.ALL,
     ): FakeIde {
         val ide = FakeIde(name)
         val conn = connector ?: server.connector(name) { links += it }
@@ -144,6 +152,7 @@ class Harness(val hostRoot: Path, rules: SharingRules = SharingRules(), config: 
             conn, name, token, ide, ide.edt, scheduler, MirrorWorkspace(mirrorRoot),
             ReconnectPolicy(initialDelayMillis = 100, maxDelayMillis = 400, maxAttempts = 20),
             presenceIntervalMillis = presenceIntervalMillis,
+            features = features,
         )
         clients += ide.client
         ide.client.start()

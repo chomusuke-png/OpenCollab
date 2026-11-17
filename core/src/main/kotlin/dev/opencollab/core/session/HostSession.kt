@@ -10,6 +10,7 @@ import dev.opencollab.core.presence.RateLimiter
 import dev.opencollab.core.protocol.ChatEntry
 import dev.opencollab.core.protocol.ConsoleKind
 import dev.opencollab.core.protocol.ConsoleStream
+import dev.opencollab.core.protocol.Features
 import dev.opencollab.core.protocol.RunTarget
 import dev.opencollab.core.protocol.TextRange
 import dev.opencollab.core.protocol.DocHistoryEntry
@@ -41,13 +42,26 @@ interface HostSessionListener {
     fun onLog(message: String) {}
 
     /**
-     * An editor asks to run [RunRequestInfo.target] on this machine (session thread). Answer
-     * with [HostSession.answerRun]; nothing runs without that.
+     * An editor asks to run [RunRequestInfo.target] or [RunRequestInfo.command] on this machine
+     * (session thread). Answer with [HostSession.answerRun]; nothing runs without that.
      */
     fun onRunRequest(request: RunRequestInfo) {}
+
+    /** An editor adds or removes a line breakpoint in a shared file (session thread). */
+    fun onBreakpointRequest(participantId: String, path: String, line: Int, add: Boolean) {}
 }
 
-data class RunRequestInfo(val requestId: String, val participantId: String, val displayName: String, val target: RunTarget)
+/** Either a run [target] or a shell [command] (exactly one is set). */
+data class RunRequestInfo(
+    val requestId: String,
+    val participantId: String,
+    val displayName: String,
+    val target: RunTarget?,
+    val command: String? = null,
+) {
+    /** What to show the host's user. */
+    val label: String get() = target?.name ?: command.orEmpty()
+}
 
 /** Reason codes in [Message.RunResponse]; guests show them in their own language. */
 object RunRefusal {
@@ -86,6 +100,8 @@ data class HostConfig(
     /** Most recent consoles, and characters of each, replayed to participants who join later. */
     val consoleReplayCount: Int = 5,
     val consoleReplayChars: Int = 256 * 1024,
+    /** Optional [Features] this host offers (announced in Welcome, used only with guests announcing them too). */
+    val features: Set<String> = Features.ALL.toSet(),
 )
 
 /** "Is typing" updates relayed per participant per second (clients send far fewer). */
@@ -136,6 +152,8 @@ class HostSession(
         var pingNonce: Long? = null
         var pingSentAt = 0L
         var rttMillis: Int? = null
+        /** Features both this participant and the host support. */
+        var features: Set<String> = emptySet()
         val role: Role get() = info?.role ?: Role.VIEWER
         val id: String get() = info?.id ?: "?"
 
@@ -160,13 +178,16 @@ class HostSession(
     /** Unanswered run requests by "participantId/requestId". */
     private val pendingRuns = HashMap<String, PendingRun>()
     private class ConsoleLog(val started: Message.ConsoleStarted) {
-        val chunks = ArrayDeque<Message.ConsoleOutput>()
+        /** [Message.ConsoleOutput] and [Message.ConsoleTests], in order. */
+        val chunks = ArrayDeque<Message>()
         var chars = 0
         var truncated = false
         var ended: Message.ConsoleEnded? = null
     }
     /** The latest consoles, oldest first, for participants who join later. */
     private val consoles = LinkedHashMap<String, ConsoleLog>()
+    /** Latest host IDE state per message type (debugger, breakpoints, VCS, code style), for newcomers. */
+    private val ideState = LinkedHashMap<Class<out Message>, Message>()
     private var closed = false
     private val startedAt = scheduler.nowMillis()
 
@@ -303,6 +324,7 @@ class HostSession(
             peer.resumeKey = randomToken(24)
         }
         peer.info = info
+        peer.features = hello.features.toSet() intersect config.features
         peer.send(
             Message.Welcome(
                 sessionId = config.sessionId,
@@ -315,10 +337,14 @@ class HostSession(
                 fileEventSeq = fileSeq,
                 sharing = files.rules.toConfig(),
                 sessionAgeMillis = (scheduler.nowMillis() - startedAt).coerceAtLeast(0),
+                features = config.features.toList(),
             ),
         )
         if (chatLog.isNotEmpty()) peer.send(Message.ChatHistory(chatLog.toList()))
-        if (info.role != Role.HOST) replayConsoles(peer)
+        if (info.role != Role.HOST) {
+            replayConsoles(peer)
+            ideState.values.forEach { if (supports(peer, it)) peer.send(it) }
+        }
         broadcast(Message.ParticipantJoined(info), except = peer)
         peers.values.forEach { other -> if (other !== peer) other.presence?.let(peer::send) }
         listener.onLog("${info.displayName} joined as ${info.role}${if (resumed != null) " (resumed)" else ""}")
@@ -366,6 +392,8 @@ class HostSession(
             is Message.ChatSend -> chat(peer, m)
             is Message.ChatTyping -> if (peer.typingLimiter.tryAcquire()) broadcast(Message.ChatTypingBroadcast(peer.id, m.typing), except = peer)
             is Message.RunRequest -> runRequest(peer, m)
+            is Message.CommandRequest -> commandRequest(peer, m)
+            is Message.BreakpointRequest -> breakpointRequest(peer, m)
             else -> peer.send(Message.Error("protocol", "Unexpected message ${m::class.simpleName}"))
         }
     }
@@ -724,16 +752,60 @@ class HostSession(
     /** Output of a console; long text is split into protocol-sized chunks. Thread-safe. */
     fun consoleOutput(consoleId: String, stream: ConsoleStream, text: String) = exec.execute {
         val log = consoles[consoleId] ?: return@execute
-        for (part in text.chunked(MessageCodec.MAX_CONSOLE_CHUNK_CHARS)) {
-            val chunk = Message.ConsoleOutput(consoleId, stream, part)
-            log.chunks.addLast(chunk)
-            log.chars += part.length
-            while (log.chars > config.consoleReplayChars && log.chunks.size > 1) {
-                log.chars -= log.chunks.removeFirst().text.length
-                log.truncated = true
-            }
-            broadcastToGuests(chunk)
+        for (part in text.chunked(MessageCodec.MAX_CONSOLE_CHUNK_CHARS)) record(log, Message.ConsoleOutput(consoleId, stream, part))
+    }
+
+    /**
+     * Test progress of a console as IntelliJ test service messages (whole lines), for guests that
+     * show test trees ([Features.TESTS]). Thread-safe.
+     */
+    fun consoleTests(consoleId: String, text: String) = exec.execute {
+        val log = consoles[consoleId] ?: return@execute
+        for (part in chunkLines(text, MessageCodec.MAX_CONSOLE_CHUNK_CHARS)) record(log, Message.ConsoleTests(consoleId, part))
+    }
+
+    private fun record(log: ConsoleLog, chunk: Message) {
+        log.chunks.addLast(chunk)
+        log.chars += chunkChars(chunk)
+        while (log.chars > config.consoleReplayChars && log.chunks.size > 1) {
+            log.chars -= chunkChars(log.chunks.removeFirst())
+            log.truncated = true
         }
+        broadcastToGuests(chunk)
+    }
+
+    private fun chunkChars(m: Message) = when (m) {
+        is Message.ConsoleOutput -> m.text.length
+        is Message.ConsoleTests -> m.text.length
+        else -> 0
+    }
+
+    /** Splits at line breaks where possible, so each chunk holds whole service messages. */
+    private fun chunkLines(text: String, max: Int): List<String> {
+        val parts = ArrayList<String>()
+        var start = 0
+        while (start < text.length) {
+            var end = minOf(start + max, text.length)
+            if (end < text.length) {
+                val nl = text.lastIndexOf('\n', end - 1)
+                if (nl >= start) end = nl + 1
+            }
+            parts += text.substring(start, end)
+            start = end
+        }
+        return parts
+    }
+
+    /**
+     * The host IDE's current debugger state, breakpoints, VCS status or code style: replaces the
+     * previous one of the same kind, goes to guests supporting its feature and to later joiners.
+     * Thread-safe.
+     */
+    fun publishIdeState(m: Message) = exec.execute {
+        require(featureOf(m) != null) { "Not host IDE state: ${m::class.simpleName}" }
+        if (ideState[m::class.java] == m) return@execute
+        ideState[m::class.java] = m
+        broadcastToGuests(m)
     }
 
     fun consoleEnded(consoleId: String, exitCode: Int?) = exec.execute {
@@ -748,38 +820,73 @@ class HostSession(
         for (log in consoles.values) {
             peer.send(log.started)
             if (log.truncated) peer.send(Message.ConsoleOutput(log.started.consoleId, ConsoleStream.SYSTEM, "[…]\n"))
-            log.chunks.forEach(peer::send)
+            log.chunks.forEach { if (supports(peer, it)) peer.send(it) }
             log.ended?.let(peer::send)
         }
     }
 
-    /** The host's own IDE shows its consoles natively; only guests get the copies. */
+    /** The host's own IDE shows its consoles natively; only guests get the copies (those supporting its feature). */
     private fun broadcastToGuests(m: Message) {
         val text = MessageCodec.encode(m)
         for (peer in peers.values) {
-            if (peer.info == null || !peer.open || peer.role == Role.HOST) continue
+            if (peer.info == null || !peer.open || peer.role == Role.HOST || !supports(peer, m)) continue
             peer.connection.send(text)
         }
+    }
+
+    private fun supports(peer: Peer, m: Message): Boolean = featureOf(m)?.let { it in peer.features } ?: true
+
+    private fun featureOf(m: Message): String? = when (m) {
+        is Message.ConsoleTests -> Features.TESTS
+        is Message.DebugState, is Message.Breakpoints -> Features.DEBUG
+        is Message.VcsStatus -> Features.VCS
+        is Message.CodeStyle -> Features.CODE_STYLE
+        else -> null
     }
 
     // ---- Run requests (guest → host) -------------------------------------------------
 
     private fun runRequest(peer: Peer, m: Message.RunRequest) {
-        val info = peer.info ?: return
-        fun refuse(reason: String) = peer.send(Message.RunResponse(m.requestId, false, reason))
-        when {
-            info.role == Role.HOST -> return refuse(RunRefusal.HOST)
-            !info.role.canEdit -> return refuse(RunRefusal.VIEWER)
-            !peer.runLimiter.tryAcquire() -> return refuse(RunRefusal.TOO_MANY)
+        val refusal = runRefusal(peer)
+        if (refusal != null) return peer.send(Message.RunResponse(m.requestId, false, refusal))
+        val target = runTargets.firstOrNull { it.id == m.targetId }
+            ?: return peer.send(Message.RunResponse(m.requestId, false, RunRefusal.UNKNOWN_TARGET))
+        awaitAnswer(peer, m.requestId, target, null)
+    }
+
+    /** A shell command; like a run request, it runs only once the host's user allows this one. */
+    private fun commandRequest(peer: Peer, m: Message.CommandRequest) {
+        val refusal = if (Features.COMMANDS !in peer.features) RunRefusal.UNKNOWN_TARGET else runRefusal(peer)
+        if (refusal != null) return peer.send(Message.RunResponse(m.requestId, false, refusal))
+        awaitAnswer(peer, m.requestId, null, m.command)
+    }
+
+    private fun runRefusal(peer: Peer): String? {
+        val info = peer.info ?: return RunRefusal.REFUSED
+        return when {
+            info.role == Role.HOST -> RunRefusal.HOST
+            !info.role.canEdit -> RunRefusal.VIEWER
+            !peer.runLimiter.tryAcquire() -> RunRefusal.TOO_MANY
+            else -> null
         }
-        val target = runTargets.firstOrNull { it.id == m.targetId } ?: return refuse(RunRefusal.UNKNOWN_TARGET)
-        val key = "${info.id}/${m.requestId}"
+    }
+
+    private fun awaitAnswer(peer: Peer, requestId: String, target: RunTarget?, command: String?) {
+        val info = peer.info ?: return
+        val key = "${info.id}/$requestId"
         if (key in pendingRuns) return
         val expiry = scheduler.schedule(config.runRequestTimeoutMillis) {
-            exec.execute { if (pendingRuns.remove(key) != null) refuse(RunRefusal.NO_ANSWER) }
+            exec.execute { if (pendingRuns.remove(key) != null) peer.send(Message.RunResponse(requestId, false, RunRefusal.NO_ANSWER)) }
         }
         pendingRuns[key] = PendingRun(peer, expiry)
-        listener.onRunRequest(RunRequestInfo(m.requestId, info.id, info.displayName, target))
+        listener.onRunRequest(RunRequestInfo(requestId, info.id, info.displayName, target, command))
+    }
+
+    private fun breakpointRequest(peer: Peer, m: Message.BreakpointRequest) {
+        requireEditor(peer)
+        if (Features.DEBUG !in peer.features) return
+        if (!files.rules.isShared(m.path)) throw SecurityException("Not a shared file: ${m.path}")
+        listener.onBreakpointRequest(peer.id, m.path, m.line, m.add)
     }
 
     /**

@@ -119,7 +119,7 @@ class HostConsoleSharing(
                 grant(request)
                 return@invokeLater
             }
-            val text = message("console.request", StringUtil.escapeXmlEntities(request.displayName), StringUtil.escapeXmlEntities(request.target.name))
+            val text = message("console.request", StringUtil.escapeXmlEntities(request.displayName), StringUtil.escapeXmlEntities(request.label))
             val notification = NotificationGroupManager.getInstance().getNotificationGroup("OpenCollab")
                 .createNotification(message("console.request.title"), text, NotificationType.WARNING)
             notification.addAction(NotificationAction.createSimpleExpiring(message("console.request.allow")) { grant(request) })
@@ -136,16 +136,17 @@ class HostConsoleSharing(
 
     /** EDT. Runs the target only if the request is still open (not expired, requester still here). */
     private fun grant(request: RunRequestInfo) {
-        if (!targets.containsKey(request.target.id)) {
+        val target = request.target
+        if (target == null || !targets.containsKey(target.id)) {
             session.answerRun(request.participantId, request.requestId, accepted = false)
             return
         }
         if (!session.answerRun(request.participantId, request.requestId, accepted = true)) {
-            log(message("console.request.expired", request.displayName, request.target.name))
+            log(message("console.request.expired", request.displayName, request.label))
             return
         }
-        log(message("console.request.running", request.displayName, request.target.name))
-        val settings = targets[request.target.id]
+        log(message("console.request.running", request.displayName, request.label))
+        val settings = targets[target.id]
         if (settings == null) {
             ProjectTaskManager.getInstance(project).buildAllModules()
         } else {

@@ -43,6 +43,14 @@ object MessageCodec {
     const val MAX_RUN_TARGETS = 500
     /** Console output travels in chunks of at most this many characters. */
     const val MAX_CONSOLE_CHUNK_CHARS = 64 * 1024
+    const val MAX_FEATURES = 32
+    const val MAX_DEBUG_FRAMES = 200
+    const val MAX_DEBUG_VARIABLES = 200
+    const val MAX_DEBUG_VALUE = 1_000
+    const val MAX_BREAKPOINTS = 5_000
+    const val MAX_VCS_CHANGES = 5_000
+    const val MAX_COMMAND_CHARS = 1_000
+    const val MAX_CODE_STYLE_CHARS = 512 * 1024
 
     private val json = Json {
         classDiscriminator = "t"
@@ -102,6 +110,7 @@ object MessageCodec {
                 check(m.displayName.none { it.isISOControl() }, "Invalid display name")
                 check(m.token.length in 1..256, "Invalid token")
                 m.resumeKey?.let { check(it.length <= MAX_ID, "Invalid resume key") }
+                features(m.features)
             }
             is Message.SetRole -> id(m.participantId)
             is Message.RequestManifest -> id(m.requestId)
@@ -152,7 +161,7 @@ object MessageCodec {
                 check(m.millis.size <= MAX_LATENCY_ENTRIES, "Too many latency entries")
                 m.millis.forEach { (participant, millis) -> id(participant); check(millis >= 0, "Invalid latency") }
             }
-            is Message.Welcome -> check(m.sessionAgeMillis >= 0, "Invalid session age")
+            is Message.Welcome -> { check(m.sessionAgeMillis >= 0, "Invalid session age"); features(m.features) }
             is Message.ChatSend -> chatText(m.text)
             is Message.ChatTypingBroadcast -> id(m.participantId)
             is Message.Chat -> chatEntry(m.entry)
@@ -169,6 +178,34 @@ object MessageCodec {
             }
             is Message.RunRequest -> { id(m.requestId); id(m.targetId) }
             is Message.RunResponse -> { id(m.requestId); m.reason?.let(::title) }
+            is Message.ConsoleTests -> { id(m.consoleId); check(m.text.length <= MAX_CONSOLE_CHUNK_CHARS, "Console chunk too large") }
+            is Message.DebugState -> {
+                if (m.sessionName.isNotEmpty()) title(m.sessionName)
+                m.path?.let(::path)
+                check(m.line >= -1, "Invalid line")
+                check(m.frames.size <= MAX_DEBUG_FRAMES && m.variables.size <= MAX_DEBUG_VARIABLES, "Too much debugger state")
+                m.frames.forEach { title(it.name); it.path?.let(::path); check(it.line >= -1, "Invalid line") }
+                m.variables.forEach { v ->
+                    title(v.name); v.type?.let(::title)
+                    check(v.value.length <= MAX_DEBUG_VALUE && v.value.none { it.isISOControl() }, "Invalid value")
+                }
+            }
+            is Message.Breakpoints -> {
+                check(m.breakpoints.size <= MAX_BREAKPOINTS, "Too many breakpoints")
+                m.breakpoints.forEach { path(it.path); check(it.line >= 0, "Invalid line") }
+            }
+            is Message.BreakpointRequest -> { path(m.path); check(m.line >= 0, "Invalid line") }
+            is Message.VcsStatus -> {
+                m.branch?.let(::title)
+                check(m.changes.size <= MAX_VCS_CHANGES, "Too many changes")
+                m.changes.forEach { path(it.path); check(it.status in VcsChange.ALL, "Invalid status") }
+            }
+            is Message.CommandRequest -> {
+                id(m.requestId)
+                check(m.command.isNotBlank() && m.command.length <= MAX_COMMAND_CHARS, "Invalid command")
+                check(m.command.none { it.isISOControl() }, "Invalid command")
+            }
+            is Message.CodeStyle -> check(m.xml.length <= MAX_CODE_STYLE_CHARS, "Code style too large")
             else -> Unit
         }
     }
@@ -196,6 +233,11 @@ object MessageCodec {
         check(e.displayName.length <= MAX_NAME && e.displayName.none { it.isISOControl() }, "Invalid display name")
         check(e.id >= 0 && e.sentAtMillis >= 0, "Invalid chat entry")
         chatText(e.text)
+    }
+
+    private fun features(list: List<String>) {
+        check(list.size <= MAX_FEATURES, "Too many features")
+        list.forEach(::id)
     }
 
     /** Console titles, run target names and refusal reasons: one bounded line. */

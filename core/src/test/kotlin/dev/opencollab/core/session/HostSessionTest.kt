@@ -2,6 +2,8 @@ package dev.opencollab.core.session
 
 import dev.opencollab.core.files.Hashes
 import dev.opencollab.core.protocol.ConsoleStream
+import dev.opencollab.core.protocol.Features
+import dev.opencollab.core.protocol.VcsChange
 import dev.opencollab.core.protocol.FileMutation
 import dev.opencollab.core.protocol.RunTarget
 import dev.opencollab.core.protocol.RunTargetKind
@@ -148,11 +150,85 @@ class HostSessionTest {
             eventually { h.runRequests.size == 1 }
             val request = h.runRequests.single()
             assertEquals("alice", request.displayName)
-            assertEquals("Build Project", request.target.name)
+            assertEquals("Build Project", request.target?.name)
             assertTrue(h.session.answerRun(request.participantId, request.requestId, accepted = true))
             assertFalse(h.session.answerRun(request.participantId, request.requestId, accepted = true), "answered only once")
             eventually { alice.runResponses.any { it.requestId == asked } }
             assertTrue(alice.runResponses.single { it.requestId == asked }.accepted)
+        }
+    }
+
+    @Test
+    fun `host IDE state reaches only guests supporting it, and later joiners get the latest`() {
+        sampleProject()
+        Harness(host).use { h ->
+            val alice = h.guest("alice", guestDir("alice"))
+            val old = h.guest("old", guestDir("old"), features = emptyList()) // e.g. a 3.0.0 guest
+            awaitState(alice, ClientState.CONNECTED)
+            awaitState(old, ClientState.CONNECTED)
+            assertEquals(Features.ALL.toSet(), alice.client.sharedFeatures)
+            assertTrue(old.client.sharedFeatures.isEmpty())
+
+            h.session.consoleStarted("t1", "All tests")
+            h.session.consoleOutput("t1", ConsoleStream.STDOUT, "running\n")
+            val tests = "##teamcity[testStarted name='a' nodeId='1' parentNodeId='0']\n"
+            h.session.consoleTests("t1", tests)
+            h.session.publishIdeState(Message.DebugState(active = true, paused = true, sessionName = "Main", path = "src/Main.kt", line = 2))
+            h.session.publishIdeState(Message.DebugState(active = true, paused = false, sessionName = "Main"))
+            val vcs = Message.VcsStatus("main", listOf(VcsChange("src/Main.kt", VcsChange.MODIFIED)))
+            h.session.publishIdeState(vcs)
+            h.session.publishIdeState(vcs) // unchanged: not sent again
+            h.session.consoleEnded("t1", 0)
+
+            eventually { alice.consoleExits["t1"] == 0 && old.consoleExits["t1"] == 0 }
+            assertEquals(
+                listOf(
+                    Message.ConsoleTests("t1", tests),
+                    Message.DebugState(active = true, paused = true, sessionName = "Main", path = "src/Main.kt", line = 2),
+                    Message.DebugState(active = true, paused = false, sessionName = "Main"),
+                    vcs,
+                ),
+                alice.hostIdeStates.toList(),
+            )
+            assertEquals("running\n", old.consoles["t1"].toString(), "plain output still reaches older guests")
+            assertTrue(old.hostIdeStates.isEmpty(), "nothing they would not understand")
+
+            val bob = h.guest("bob", guestDir("bob"))
+            awaitState(bob, ClientState.CONNECTED)
+            eventually { bob.consoleExits["t1"] == 0 && bob.hostIdeStates.size == 3 }
+            assertEquals(listOf(Message.ConsoleTests("t1", tests), Message.DebugState(active = true, paused = false, sessionName = "Main"), vcs), bob.hostIdeStates.toList())
+        }
+    }
+
+    @Test
+    fun `only editors may ask for commands and breakpoints, and only in shared files`() {
+        sampleProject()
+        Harness(host).use { h ->
+            val alice = h.guest("alice", guestDir("alice"))
+            val viewer = h.guest("vic", guestDir("vic"), token = h.session.config.viewerToken)
+            val old = h.guest("old", guestDir("old"), features = emptyList())
+            listOf(alice, viewer, old).forEach { awaitState(it, ClientState.CONNECTED) }
+
+            assertNull(old.client.requestCommand("ls"), "not offered to guests without the feature")
+            assertFalse(viewer.client.requestBreakpoint("src/Main.kt", 1, add = true), "viewers cannot")
+            val denied = viewer.client.requestCommand("ls")!!
+            eventually { viewer.runResponses.any { it.requestId == denied } }
+            assertEquals(RunRefusal.VIEWER, viewer.runResponses.single().reason)
+
+            val asked = alice.client.requestCommand("  ./gradlew test  ")!!
+            eventually { h.runRequests.size == 1 }
+            val request = h.runRequests.single()
+            assertEquals("./gradlew test", request.command)
+            assertNull(request.target)
+            assertTrue(h.session.answerRun(request.participantId, request.requestId, accepted = false))
+            eventually { alice.runResponses.any { it.requestId == asked } }
+            assertEquals(RunRefusal.REFUSED, alice.runResponses.single().reason)
+
+            assertTrue(alice.client.requestBreakpoint("src/Main.kt", 3, add = true))
+            assertTrue(alice.client.requestBreakpoint(".env", 0, add = true)) // refused by the host: not shared
+            eventually { h.breakpointRequests.size == 1 && alice.log.any { it.contains(".env") } }
+            Thread.sleep(100)
+            assertEquals(listOf(listOf<Any>(alice.client.participantId, "src/Main.kt", 3, true)), h.breakpointRequests.toList())
         }
     }
 

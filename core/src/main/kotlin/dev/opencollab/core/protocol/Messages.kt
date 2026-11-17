@@ -13,6 +13,26 @@ import kotlinx.serialization.json.JsonElement
  */
 const val PROTOCOL_VERSION = 6
 
+/**
+ * Optional abilities a side announces ([Message.Hello.features], [Message.Welcome.features]).
+ * Messages of a feature are only sent to a peer that announced it, so peers of the same protocol
+ * version without it (e.g. 3.0.0) keep working.
+ */
+object Features {
+    /** Test results as IntelliJ test events ([Message.ConsoleTests]). */
+    const val TESTS = "tests"
+    /** The host's debugger state and breakpoints ([Message.DebugState], [Message.Breakpoints], [Message.BreakpointRequest]). */
+    const val DEBUG = "debug"
+    /** The host's version control branch and changed files ([Message.VcsStatus]). */
+    const val VCS = "vcs"
+    /** Terminal commands requested by editors and run on the host after approval ([Message.CommandRequest]). */
+    const val COMMANDS = "commands"
+    /** The host's code style ([Message.CodeStyle]). */
+    const val CODE_STYLE = "codeStyle"
+
+    val ALL = listOf(TESTS, DEBUG, VCS, COMMANDS, CODE_STYLE)
+}
+
 /** Stands for the host's project folder in shared console text; each guest puts its own folder back. */
 const val PROJECT_DIR_MACRO = "\$PROJECT_DIR\$"
 
@@ -94,6 +114,31 @@ data class RunTarget(val id: String, val name: String, val kind: RunTargetKind)
 @Serializable
 enum class RunTargetKind { CONFIGURATION, BUILD }
 
+/** A stack frame of the host's debugger; [path] is null outside the shared project (e.g. a library). */
+@Serializable
+data class DebugFrame(val name: String, val path: String? = null, val line: Int = -1)
+
+/** A variable of the selected stack frame, as the host's debugger shows it. */
+@Serializable
+data class DebugVariable(val name: String, val value: String, val type: String? = null)
+
+/** A line breakpoint in a shared file (0-based line). */
+@Serializable
+data class BreakpointLine(val path: String, val line: Int)
+
+/** A changed file in the host's working copy; [status] is one of [VcsChange.ADDED] etc. */
+@Serializable
+data class VcsChange(val path: String, val status: String) {
+    companion object {
+        const val ADDED = "added"
+        const val MODIFIED = "modified"
+        const val DELETED = "deleted"
+        const val MOVED = "moved"
+        const val UNVERSIONED = "unversioned"
+        val ALL = setOf(ADDED, MODIFIED, DELETED, MOVED, UNVERSIONED)
+    }
+}
+
 @Serializable
 data class DocHistoryEntry(val opId: String, val author: String, val revision: Int, val op: JsonElement)
 
@@ -108,6 +153,8 @@ sealed class Message {
         val token: String,
         val resumeKey: String? = null,
         val pluginVersion: String = "",
+        /** [Features] this participant supports. */
+        val features: List<String> = emptyList(),
     ) : Message()
 
     @Serializable @SerialName("welcome")
@@ -123,6 +170,8 @@ sealed class Message {
         val sharing: SharingConfig,
         /** How long the session has been running, so every participant shows the same timer. */
         val sessionAgeMillis: Long = 0,
+        /** [Features] the host supports and has enabled. */
+        val features: List<String> = emptyList(),
     ) : Message()
 
     @Serializable @SerialName("rejected")
@@ -326,7 +375,48 @@ sealed class Message {
     @Serializable @SerialName("runRequest")
     data class RunRequest(val requestId: String, val targetId: String) : Message()
 
-    /** Host → the requester only. */
+    /** Host → the requester only (also answers [CommandRequest]). */
     @Serializable @SerialName("runResponse")
     data class RunResponse(val requestId: String, val accepted: Boolean, val reason: String? = null) : Message()
+
+    // ---- Host IDE state (optional [Features]) -------------------------------------------------
+    /**
+     * Host → guests ([Features.TESTS]): test progress of console [consoleId], as IntelliJ test
+     * service messages (one `##teamcity[...]` per line). Locations are `opencollab://path:line`.
+     */
+    @Serializable @SerialName("consoleTests")
+    data class ConsoleTests(val consoleId: String, val text: String) : Message()
+
+    /** Host → guests ([Features.DEBUG]): the host's debugger; [active] false when nothing is being debugged. */
+    @Serializable @SerialName("debugState")
+    data class DebugState(
+        val active: Boolean,
+        val paused: Boolean = false,
+        val sessionName: String = "",
+        /** The selected frame's file and 0-based line, when it is in the shared project. */
+        val path: String? = null,
+        val line: Int = -1,
+        val frames: List<DebugFrame> = emptyList(),
+        val variables: List<DebugVariable> = emptyList(),
+    ) : Message()
+
+    /** Host → guests ([Features.DEBUG]): all line breakpoints in shared files; replaces the previous list. */
+    @Serializable @SerialName("breakpoints")
+    data class Breakpoints(val breakpoints: List<BreakpointLine>) : Message()
+
+    /** Editor → host ([Features.DEBUG]): add or remove a line breakpoint. */
+    @Serializable @SerialName("breakpointRequest")
+    data class BreakpointRequest(val path: String, val line: Int, val add: Boolean) : Message()
+
+    /** Host → guests ([Features.VCS]): current branch (null if unknown) and changed files. */
+    @Serializable @SerialName("vcsStatus")
+    data class VcsStatus(val branch: String?, val changes: List<VcsChange>) : Message()
+
+    /** Editor → host ([Features.COMMANDS]): run [command] in a shell in the project folder; the host's user decides. */
+    @Serializable @SerialName("commandRequest")
+    data class CommandRequest(val requestId: String, val command: String) : Message()
+
+    /** Host → guests ([Features.CODE_STYLE]): the host's code style settings (IntelliJ XML). */
+    @Serializable @SerialName("codeStyle")
+    data class CodeStyle(val xml: String) : Message()
 }

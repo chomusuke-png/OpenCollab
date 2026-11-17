@@ -26,14 +26,33 @@ closes the connection.
 
 | Group | Messages |
 |---|---|
-| Handshake | `hello` (protocol version, display name, invitation token, optional resume key) → `welcome` (participant id, role, resume key, participants, sharing rules, file event sequence, session age) or `rejected` |
+| Handshake | `hello` (protocol version, display name, invitation token, optional resume key, `features`) → `welcome` (participant id, role, resume key, participants, sharing rules, file event sequence, session age, `features`) or `rejected` |
 | Membership | `participantJoined`, `participantLeft`, `roleChanged`, `setRole` (host only), `sessionEnded` |
 | Files | `requestManifest` → `manifest`; `requestFiles` → `fileChunk`* + `filesDone`; `fileRequest` → `result`; `fileEvent` (host broadcast, sequenced); `resumeFiles` → replayed `fileEvent`s + `result`, or `filesResyncRequired` |
 | Documents | `openDoc` → `docState`; `op` → `ack` (+ `remoteOp` to other subscribers) or `opRejected`; `resumeDoc` → `docCatchUp` or `docState`; `docUnavailable`; `docSaved`; `closeDoc` |
 | Presence | `presence` (sender) → `presenceBroadcast` (host stamps the sender id) |
 | Chat | `chatSend` (text) → `chat` to everyone, sender included (host assigns id, sender and time); `chatHistory` (last 200) after `welcome`; `chatTyping` (refreshed every 2 s while typing) → `chatTypingBroadcast` to the others (expires after 5 s without a refresh) |
 | Consoles | host → guests: `consoleStarted` (with `kind`: `RUN` for the Run window, `BUILD` for the Build window; absent from 2.0.0 hosts, meaning `RUN`), `consoleOutput` (stdout/stderr/system, ≤ 64 Ki chars per message, project folder replaced by `$PROJECT_DIR$`), `consoleEnded`; the last 5 consoles (256 Ki chars each) are replayed after `welcome`. `runTargets` lists what may be requested; `runRequest` (editors only, 1/s) → the host's user answers → `runResponse` to the requester (refusal codes: `refused`, `viewer`, `unknown-target`, `too-many`, `no-answer`, `host`) |
+| Host IDE (optional features, see below) | `consoleTests` (`tests`); `debugState`, `breakpoints`, `breakpointRequest` (`debug`); `vcsStatus` (`vcs`); `commandRequest` → `runResponse` (`commands`); `codeStyle` (`codeStyle`) |
 | Liveness | `ping`/`pong` (either direction; WebSocket pings are also used); `latencies` (host broadcast every 2 s: each participant's round-trip time to the host in ms, measured with host pings) |
+
+## Optional features
+
+Each side lists the optional features it supports in `hello.features` and `welcome.features`
+(the host lists those it has enabled). A message of a feature only travels between peers that
+both listed it, so participants of the same protocol version without the feature (e.g. 3.0.0,
+which sends no list) keep working and simply do not get it. Unknown fields are ignored.
+
+| Feature | Messages | Behaviour |
+|---|---|---|
+| `tests` | `consoleTests(consoleId, text)` | The host's test runs as IntelliJ test service messages (`##teamcity[...]`, one per line, with `nodeId`/`parentNodeId`), in order with the console's output and replayed with it. Locations are `opencollab://relative/path:line` (0-based line) in the shared project. The raw service messages of the process output are not forwarded as text. Guests show IntelliJ's test tree. |
+| `debug` | `debugState`, `breakpoints`, `breakpointRequest` | `debugState`: whether the host is debugging, and while paused the selected frame's file and line, the active thread's frames (≤ 200) and the frame's top-level variables (≤ 200, values ≤ 1 000 chars), sent as the debugger fills them in. `breakpoints`: every line breakpoint in shared files (replaces the previous list). `breakpointRequest(path, line, add)`: editors only, shared files only; the host adds or removes it in its IDE and the new list goes out. Guests never control the debugger. |
+| `vcs` | `vcsStatus(branch, changes)` | The branch of the repository containing the project (null if none) and changed shared files (`added`, `modified`, `deleted`, `moved`, `unversioned`), refreshed every 2 s when it changes. |
+| `commands` | `commandRequest(requestId, command)` → `runResponse` | An editor asks to run a single-line command (≤ 1 000 chars) in a shell in the host's project folder. Like `runRequest` (same rate limit, expiry and refusal codes), but the host's user must allow each command; it then runs in a Run tab on the host and is shared as a console. |
+| `codeStyle` | `codeStyle(xml)` | The host's effective code style (IntelliJ XML, ≤ 512 Ki chars); guests use it as their copy's project code style. |
+
+The host sends the latest `debugState`, `breakpoints`, `vcsStatus` and `codeStyle` to participants
+who join later, and never sends one identical to the previous of its kind.
 
 ## Document synchronisation (host-authoritative OT)
 

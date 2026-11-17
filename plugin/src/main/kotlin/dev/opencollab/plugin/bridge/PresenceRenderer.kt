@@ -4,6 +4,7 @@ import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.colors.EditorFontType
+import com.intellij.openapi.editor.markup.CustomHighlighterOrder
 import com.intellij.openapi.editor.markup.CustomHighlighterRenderer
 import com.intellij.openapi.editor.markup.HighlighterLayer
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
@@ -16,6 +17,7 @@ import java.awt.AlphaComposite
 import java.awt.Color
 import java.awt.Graphics
 import java.awt.Graphics2D
+import java.awt.Rectangle
 import javax.swing.Timer
 
 /**
@@ -29,6 +31,8 @@ class PresenceRenderer(private val project: Project) {
     /** Name tags still visible or fading, per (editor, participant): when the latest one appeared. */
     private val liveTags = HashMap<Pair<Editor, String>, Long>()
     private val fadeTimer = Timer(FRAME_MS) { repaintFadingTags() }
+    /** Each participant's caret renderers by editor, to repaint where their tag was. */
+    private val tags = HashMap<String, MutableList<Pair<Editor, CaretRenderer>>>()
 
     fun update(p: Message.PresenceBroadcast, name: String, colorIndex: Int, documentFor: (String) -> Document?) {
         presence[p.participantId] = p
@@ -55,6 +59,7 @@ class PresenceRenderer(private val project: Project) {
     fun clearAll() {
         highlighters.keys.toList().forEach(::clear)
         presence.clear()
+        tags.clear()
         liveTags.clear()
         fadeTimer.stop()
     }
@@ -78,6 +83,10 @@ class PresenceRenderer(private val project: Project) {
 
     private fun clear(participantId: String) {
         highlighters.remove(participantId)?.forEach { if (it.isValid) it.dispose() }
+        // The tag sits above the caret's line, outside what disposing the highlighter repaints.
+        tags.remove(participantId)?.forEach { (editor, renderer) ->
+            renderer.lastTag?.let { if (!editor.isDisposed) editor.contentComponent.repaint(it) }
+        }
     }
 
     private fun draw(editor: Editor, p: Message.PresenceBroadcast, name: String, colorIndex: Int) {
@@ -95,17 +104,28 @@ class PresenceRenderer(private val project: Project) {
         }
         val caret = p.caret.coerceIn(0, length)
         val caretHighlighter = markup.addRangeHighlighter(caret, caret, HighlighterLayer.LAST, null, HighlighterTargetArea.EXACT_RANGE)
+        // Text typed at the caret extends the range and the caret is drawn at its end, so it moves
+        // with what that person types right away instead of waiting for their next caret update.
+        caretHighlighter.isGreedyToRight = true
         val shownAt = System.currentTimeMillis()
-        caretHighlighter.customRenderer = CaretRenderer(color, name, shownAt)
+        val renderer = CaretRenderer(color, name, shownAt)
+        caretHighlighter.customRenderer = renderer
         list += caretHighlighter
+        tags.getOrPut(p.participantId) { mutableListOf() } += editor to renderer
         liveTags[editor to p.participantId] = shownAt
         fadeTimer.start()
     }
 
     private class CaretRenderer(private val color: Color, private val name: String, private val shownAt: Long) : CustomHighlighterRenderer {
+        /** Where the name tag was last painted, to repaint that area once the caret moves on. */
+        var lastTag: Rectangle? = null
+
+        /** Painted after the text, so the text of the line above does not cover the name tag. */
+        override fun getOrder(): CustomHighlighterOrder = CustomHighlighterOrder.AFTER_TEXT
+
         override fun paint(editor: Editor, highlighter: RangeHighlighter, g: Graphics) {
             if (!highlighter.isValid) return
-            val point = editor.offsetToXY(highlighter.startOffset)
+            val point = editor.offsetToXY(highlighter.endOffset)
             val lineHeight = editor.lineHeight
             g.color = color
             g.fillRect(point.x, point.y, 2, lineHeight)
@@ -125,6 +145,7 @@ class PresenceRenderer(private val project: Project) {
                 val width = metrics.stringWidth(name) + 6
                 val height = metrics.height
                 val top = (point.y - height).coerceAtLeast(0)
+                lastTag = Rectangle(point.x, top, width + 1, height + 1)
                 g2.color = color
                 g2.fillRect(point.x, top, width, height)
                 g2.color = JBColor.WHITE

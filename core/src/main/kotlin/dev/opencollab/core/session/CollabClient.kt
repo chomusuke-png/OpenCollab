@@ -120,6 +120,32 @@ class CollabClient(
 
     private val presence = PresenceThrottler<Message.Presence>(presenceIntervalMillis, scheduler) { send(it) }
 
+    /**
+     * Carets received since the last document message, newest per participant, drawn in one
+     * document-executor task. A burst then costs one redraw per participant instead of one per
+     * message, and a caret is never drawn before the document change it was sent after: a
+     * document message starts a new batch behind it.
+     */
+    private class PresenceBatch {
+        val latest = LinkedHashMap<String, Message.PresenceBroadcast>()
+        var drawn = false
+    }
+    private var presenceBatch: PresenceBatch? = null // inbound thread
+
+    private fun queuePresence(m: Message.PresenceBroadcast) {
+        presenceBatch?.let { batch ->
+            synchronized(batch) {
+                if (!batch.drawn) { batch.latest[m.participantId] = m; return }
+            }
+        }
+        val batch = PresenceBatch().also { it.latest[m.participantId] = m }
+        presenceBatch = batch
+        docExecutor.execute {
+            val carets = synchronized(batch) { batch.drawn = true; batch.latest.values.toList() }
+            carets.forEach(handler::onPresence)
+        }
+    }
+
     fun participants(): List<ParticipantInfo> = synchronized(participants) { participants.values.toList() }
 
     /** Starts connecting in the background. */
@@ -289,6 +315,7 @@ class CollabClient(
             is Message.ParticipantLeft -> {
                 synchronized(participants) { participants.remove(m.participantId) }
                 handler.onParticipantsChanged(participants())
+                presenceBatch = null
                 docExecutor.execute { handler.onParticipantLeft(m.participantId) }
             }
             is Message.RoleChanged -> {
@@ -315,9 +342,12 @@ class CollabClient(
 
             is Message.DocumentState, is Message.DocumentCatchUp, is Message.RemoteOp, is Message.OpAck,
             is Message.OpRejected, is Message.DocumentUnavailable, is Message.DocumentSaved,
-            -> docExecutor.execute { onDocumentMessage(m) }
+            -> {
+                presenceBatch = null // later carets refer to the text after this change
+                docExecutor.execute { onDocumentMessage(m) }
+            }
 
-            is Message.PresenceBroadcast -> docExecutor.execute { handler.onPresence(m) }
+            is Message.PresenceBroadcast -> queuePresence(m)
             else -> handler.onLog("Unexpected message ${m::class.simpleName}")
         }
     }

@@ -104,3 +104,70 @@ tasks.named("buildPlugin") {
         logger.lifecycle("Built OpenCollab $builtVersion; the next build will be $next.")
     }
 }
+
+// Releases live on GitHub. IDEs find updates through a custom plugin repository: the
+// updatePlugins.xml attached to the latest release, at a URL that always points to the newest
+// one. Keep in sync with UpdateRepositoryActivity.URL in the plugin.
+val releaseRepository = "chomusuke-png/OpenCollab"
+val pluginZip = tasks.named<Zip>("buildPlugin").flatMap { it.archiveFile }
+
+val updatePluginsXml = tasks.register("updatePluginsXml") {
+    group = "publishing"
+    description = "Writes the updatePlugins.xml that IDEs read to find this release."
+    val version = project.version.toString()
+    val repo = releaseRepository
+    val output = layout.buildDirectory.file("release/updatePlugins.xml")
+    inputs.property("version", version)
+    outputs.file(output)
+    doLast {
+        val zipUrl = "https://github.com/$repo/releases/download/v$version/OpenCollab-$version.zip"
+        val xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <plugins>
+                <plugin id="dev.opencollab" url="$zipUrl" version="$version">
+                    <idea-version since-build="262"/>
+                    <name>OpenCollab</name>
+                    <vendor>OpenCollab contributors</vendor>
+                    <description>Real-time collaboration for IntelliJ IDEA without Remote Development.</description>
+                </plugin>
+            </plugins>
+        """.trimIndent() + "\n"
+        output.get().asFile.apply { parentFile.mkdirs(); writeText(xml) }
+    }
+}
+
+tasks.register("publishRelease") {
+    group = "publishing"
+    description = "Builds the plugin and publishes it as GitHub release v<version> with its updatePlugins.xml."
+    dependsOn("buildPlugin", updatePluginsXml)
+    val version = project.version.toString()
+    val repo = releaseRepository
+    val zip = pluginZip
+    val xml = layout.buildDirectory.file("release/updatePlugins.xml")
+    val workDir = rootProject.rootDir
+    doLast {
+        fun run(vararg command: String, capture: Boolean = false): String {
+            val process = ProcessBuilder(*command).directory(workDir).apply {
+                if (capture) redirectErrorStream(true) else inheritIO()
+            }.start()
+            val out = if (capture) process.inputStream.bufferedReader().readText().trim() else ""
+            if (process.waitFor() != 0) throw GradleException("Failed: ${command.joinToString(" ")}\n$out")
+            return out
+        }
+        // The release is tagged at HEAD, so what it ships must be committed and on GitHub.
+        // gradle.properties is exempt: buildPlugin has just raised the revision in it.
+        val dirty = run("git", "status", "--porcelain", "--untracked-files=no", "--", ".", ":(exclude)gradle.properties", capture = true)
+        if (dirty.isNotEmpty()) throw GradleException("Commit these changes before releasing:\n$dirty")
+        val head = run("git", "rev-parse", "HEAD", capture = true)
+        if (run("git", "branch", "-r", "--contains", head, capture = true).isEmpty()) {
+            throw GradleException("Push $head to GitHub before releasing.")
+        }
+        run(
+            "gh", "release", "create", "v$version",
+            zip.get().asFile.path, xml.get().asFile.path,
+            "--repo", repo, "--target", head,
+            "--title", "OpenCollab $version", "--generate-notes",
+        )
+        logger.lifecycle("Released OpenCollab $version: https://github.com/$repo/releases/tag/v$version")
+    }
+}

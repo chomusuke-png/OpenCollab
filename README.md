@@ -44,6 +44,21 @@ Install the ZIP via *Settings | Plugins | ⚙ | Install Plugin from Disk…*, op
 invitation (`oc1:…`) privately to a teammate, who opens an **empty folder** as a project and
 clicks **Join…**.
 
+## Versions, releases and updates
+
+The version is `opencollabVersion` in `gradle.properties`, as Major.Minor.Revision. Every
+successful `:plugin:buildPlugin` raises Revision by one for the next build; raise Major or Minor
+by hand and reset Revision to 0.
+
+To publish a release, commit and push, then run `./gradlew :plugin:publishRelease` (needs the
+[GitHub CLI](https://cli.github.com/), logged in). It creates GitHub release `v<version>` with
+the plugin ZIP and an `updatePlugins.xml`.
+
+Installed copies update themselves: on first start the plugin adds
+`https://github.com/chomusuke-png/OpenCollab/releases/latest/download/updatePlugins.xml` to
+*Settings | Plugins | ⚙ | Manage Plugin Repositories…*, and the IDE then offers each new
+release as an ordinary plugin update. This needs the repository to be public.
+
 ## Project layout
 
 ```

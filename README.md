@@ -46,13 +46,24 @@ clicks **Join with an invitation**.
 
 ## Versions, releases and updates
 
-The version is `opencollabVersion` in `gradle.properties`, as Major.Minor.Revision. Every
-successful `:plugin:buildPlugin` raises Revision by one for the next build; raise Major or Minor
-by hand and reset Revision to 0.
+Versions follow [Semantic Versioning](https://semver.org/) (`MAJOR.MINOR.PATCH`) and are
+computed from git, so there is nothing to edit by hand. Starting from the last release tag
+(`vX.Y.Z`), the [Conventional Commits](https://www.conventionalcommits.org/) since it decide the
+next version:
+
+| Commits since the last release | Next version (from `v1.4.2`) |
+|---|---|
+| any breaking change: `feat!:` / `fix(core)!:` or a `BREAKING CHANGE:` footer (e.g. a new protocol version) | `v2.0.0` |
+| any `feat:` | `v1.5.0` |
+| only `fix:`, `perf:`, `refactor:`, `docs:`… | `v1.4.3` |
+
+Local builds are labelled `<next>-dev.<commits since the tag>` (e.g. `1.5.0-dev.3`; also with
+uncommitted changes), so building never uses up a version number.
 
 To publish a release, commit and push, then run `./gradlew :plugin:publishRelease` (needs the
-[GitHub CLI](https://cli.github.com/), logged in). It creates GitHub release `v<version>` with
-the plugin ZIP and an `updatePlugins.xml`.
+[GitHub CLI](https://cli.github.com/), logged in). It builds the computed version, creates GitHub
+release and tag `v<version>` with the plugin ZIP and an `updatePlugins.xml`, and refuses when
+there is nothing new since the last tag.
 
 Installed copies update themselves: on first start the plugin adds
 `https://github.com/chomusuke-png/OpenCollab/releases/latest/download/updatePlugins.xml` to

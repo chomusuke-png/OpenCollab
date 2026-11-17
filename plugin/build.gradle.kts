@@ -88,23 +88,6 @@ tasks {
     }
 }
 
-// Every packaged build gets its own version: once buildPlugin succeeds, the Revision in
-// gradle.properties goes up by one so the next build is numbered after it. The values are
-// locals of this block (not script-level vals) so the configuration cache can store the action.
-tasks.named("buildPlugin") {
-    val versionProperties = rootProject.file("gradle.properties")
-    val builtVersion = project.version.toString()
-    doLast {
-        val text = versionProperties.readText()
-        val match = Regex("""(?m)^opencollabVersion=(\d+)\.(\d+)\.(\d+)[ \t]*$""").find(text)
-            ?: throw GradleException("opencollabVersion in gradle.properties must be Major.Minor.Revision")
-        val (major, minor, revision) = match.destructured
-        val next = "$major.$minor.${revision.toInt() + 1}"
-        versionProperties.writeText(text.replaceRange(match.range, "opencollabVersion=$next"))
-        logger.lifecycle("Built OpenCollab $builtVersion; the next build will be $next.")
-    }
-}
-
 // Releases live on GitHub. IDEs find updates through a custom plugin repository: the
 // updatePlugins.xml attached to the latest release, at a URL that always points to the newest
 // one. Keep in sync with UpdateRepositoryActivity.URL in the plugin.
@@ -145,7 +128,11 @@ tasks.register("publishRelease") {
     val zip = pluginZip
     val xml = layout.buildDirectory.file("release/updatePlugins.xml")
     val workDir = rootProject.rootDir
+    val lastTag = rootProject.extra["lastReleaseTag"] as String
+    val newCommits = rootProject.extra["commitsSinceRelease"] as Int
     doLast {
+        // The version comes from the commits since the last tag (root build.gradle.kts).
+        if (newCommits == 0) throw GradleException("Nothing to release: no commits since $lastTag.")
         fun run(vararg command: String, capture: Boolean = false): String {
             val process = ProcessBuilder(*command).directory(workDir).apply {
                 if (capture) redirectErrorStream(true) else inheritIO()
@@ -168,6 +155,7 @@ tasks.register("publishRelease") {
             "--repo", repo, "--target", head,
             "--title", "OpenCollab $version", "--generate-notes",
         )
+        run("git", "fetch", "--tags", "--quiet") // the new tag was created on GitHub
         logger.lifecycle("Released OpenCollab $version: https://github.com/$repo/releases/tag/v$version")
     }
 }

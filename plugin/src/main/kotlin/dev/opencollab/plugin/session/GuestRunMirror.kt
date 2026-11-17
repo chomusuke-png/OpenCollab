@@ -29,6 +29,7 @@ import com.intellij.execution.ui.RunContentManager
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiManager
 import com.intellij.psi.search.GlobalSearchScope
@@ -123,7 +124,28 @@ class GuestRunMirror(
         handler.startNotify()
         val descriptor = RunContentDescriptor(console, handler, console.component, message("console.on.host", title))
         runs[consoleId] = Run(title, handler, descriptor)
-        RunContentManager.getInstance(project).showRunContent(DefaultRunExecutor.getRunExecutorInstance(), descriptor)
+        val executor = DefaultRunExecutor.getRunExecutorInstance()
+        RunContentManager.getInstance(project).showRunContent(executor, descriptor)
+        revealRunTab(executor, descriptor)
+    }
+
+    /**
+     * Makes the Run tool window show the tab. When nothing was run locally yet, the Run tool window
+     * only exists after showRunContent registered it and stays hidden: the tab was added but not
+     * visible until a local run opened the window. Show it (without taking focus) and select the tab.
+     */
+    private fun revealRunTab(executor: Executor, descriptor: RunContentDescriptor) {
+        val manager = ToolWindowManager.getInstance(project)
+        manager.invokeLater {
+            if (project.isDisposed) return@invokeLater
+            val window = manager.getToolWindow(descriptor.contentToolWindowId ?: executor.toolWindowId) ?: return@invokeLater
+            window.isAvailable = true
+            window.show {
+                descriptor.attachedContent?.let { content ->
+                    if (content.manager?.isSelected(content) == false) content.manager?.setSelectedContent(content)
+                }
+            }
+        }
     }
 
     /** Replaces the run's plain console with a test console (same tab), replaying what was shown. */

@@ -79,6 +79,9 @@ intellijPlatform {
         }
     }
     buildSearchableOptions = false
+    // Optional short sandbox location (-PsandboxDir=C:/oc-sandbox). On Windows a checkout in a
+    // deep folder makes the sandbox paths too long to start the IDE's compile server.
+    providers.gradleProperty("sandboxDir").orNull?.let { sandboxContainer = file(it) }
 }
 
 // A second sandbox IDE (own config/system/plugins directories) to try a host and a guest on

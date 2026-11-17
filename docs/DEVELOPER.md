@@ -61,6 +61,10 @@ details) and messages sent over the network stay in English.
 3. Open the same file in both IDEs and type. On the host, run a test and debug with a
    breakpoint to see the guest's test tree, execution point and **Host** tab.
 
+On Windows, if the checkout path is long, the sandbox IDEs cannot start their compile server
+(`CreateProcess error=267`). Put the sandboxes in a short folder by adding
+`-PsandboxDir=C:/oc-sandbox` to both `runIde` and `runIdeGuest`.
+
 ## Architecture
 
 ```

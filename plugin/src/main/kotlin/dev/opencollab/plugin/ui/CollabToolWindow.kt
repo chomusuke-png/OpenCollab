@@ -1,6 +1,13 @@
 package dev.opencollab.plugin.ui
 
 import com.intellij.icons.AllIcons
+import com.intellij.ide.util.PropertiesComponent
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.project.DumbAwareAction
+import com.intellij.openapi.project.DumbAwareToggleAction
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.options.ShowSettingsUtil
@@ -77,7 +84,11 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
     private val endpoints = JBLabel()
     private val model = DefaultListModel<ParticipantInfo>()
     private val list = JBList(model)
-    private val logArea = JBTextArea().apply { isEditable = false; lineWrap = true }
+    // Unwrapped by default (long lines scroll horizontally); the choice is remembered per IDE.
+    private val logArea = JBTextArea().apply {
+        isEditable = false
+        lineWrap = PropertiesComponent.getInstance().getBoolean(WRAP_KEY, false)
+    }
 
     init {
         border = JBUI.Borders.empty(6)
@@ -103,7 +114,7 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         })
         val splitter = JBSplitter(true, 0.55f).apply {
             firstComponent = titled(message("panel.participants.title"), JBScrollPane(list))
-            secondComponent = titled(message("panel.activity.title"), JBScrollPane(logArea))
+            secondComponent = titled(message("panel.activity.title"), JBScrollPane(logArea), activityToolbar())
         }
         add(splitter, BorderLayout.CENTER)
 
@@ -128,9 +139,33 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         alignmentX = LEFT_ALIGNMENT
     }
 
-    private fun titled(title: String, c: JComponent) = JPanel(BorderLayout()).apply {
-        add(JBLabel(title).apply { border = JBUI.Borders.empty(4, 0) }, BorderLayout.NORTH)
+    private fun titled(title: String, c: JComponent, actions: JComponent? = null) = JPanel(BorderLayout()).apply {
+        val header = JPanel(BorderLayout()).apply {
+            add(JBLabel(title).apply { border = JBUI.Borders.empty(4, 0) }, BorderLayout.CENTER)
+            actions?.let { add(it, BorderLayout.EAST) }
+        }
+        add(header, BorderLayout.NORTH)
         add(c, BorderLayout.CENTER)
+    }
+
+    /** Word-wrap toggle and Clear for the activity log, as in the IDE's own consoles. */
+    private fun activityToolbar(): JComponent {
+        val wrap = object : DumbAwareToggleAction(message("panel.activity.wrap"), null, AllIcons.Actions.ToggleSoftWrap) {
+            override fun isSelected(e: AnActionEvent) = logArea.lineWrap
+            override fun setSelected(e: AnActionEvent, state: Boolean) {
+                logArea.lineWrap = state
+                PropertiesComponent.getInstance().setValue(WRAP_KEY, state, false)
+            }
+            override fun getActionUpdateThread() = ActionUpdateThread.EDT
+        }
+        val clear = object : DumbAwareAction(message("panel.activity.clear"), null, AllIcons.Actions.GC) {
+            override fun actionPerformed(e: AnActionEvent) = service.clearLog()
+            override fun update(e: AnActionEvent) { e.presentation.isEnabled = logArea.document.length > 0 }
+            override fun getActionUpdateThread() = ActionUpdateThread.EDT
+        }
+        val toolbar = ActionManager.getInstance().createActionToolbar("OpenCollab.Activity", DefaultActionGroup(wrap, clear), true)
+        toolbar.targetComponent = logArea
+        return toolbar.component.apply { isOpaque = false; border = JBUI.Borders.empty() }
     }
 
     private fun selected(): ParticipantInfo? = list.selectedValue
@@ -187,6 +222,10 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
             if (value.id == service.ownParticipantId()) append(message("panel.you"), SimpleTextAttributes.GRAYED_ATTRIBUTES)
             append("  " + roleName(value.role), SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
         }
+    }
+
+    private companion object {
+        const val WRAP_KEY = "dev.opencollab.activity.wrap"
     }
 
     private class ColorIcon(private val color: java.awt.Color) : Icon {

@@ -93,6 +93,11 @@ class CollabSessionService(private val project: Project) : Disposable {
 
     fun log(): List<String> = logLines.toList()
 
+    fun clearLog() {
+        logLines.clear()
+        fire()
+    }
+
     private fun fire() = ApplicationManager.getApplication().invokeLater({ listeners.forEach { it.changed() } }, ModalityState.any())
 
     private fun appendLog(line: String) {

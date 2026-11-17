@@ -12,7 +12,12 @@ other's cursors and selections, and navigate the project in their own IDE.
   ciphertext.
 * Host-authoritative operational transformation (OT) for documents, incremental file
   synchronisation, presence, host-enforced roles (host / editor / viewer), reconnect with
-  recovery.
+  recovery, chat.
+* Guests see the host's IDE in their own windows: runs in the Run tool window, builds in the
+  Build tool window, test runs as IntelliJ's test tree, where the host's debugger stopped
+  (frames and variables), shared breakpoints, the Git branch and changed files, and the code
+  style. Editors can ask the host to run a configuration, a build or a terminal command; the
+  host approves each request.
 
 | Document | Contents |
 |---|---|
@@ -89,6 +94,6 @@ two independent IntelliJ Platform processes edit the same document simultaneousl
 Known limitations are listed in [docs/SECURITY.md](docs/SECURITY.md#known-limitations) and
 [docs/USER_GUIDE.md](docs/USER_GUIDE.md#limitations).
 
-Terminal, debugger and run-configuration sharing are intentionally **not** implemented: they
-need an authorization model that does not exist yet, and guests never get shell or
-unrestricted filesystem access to the host.
+Guests never get a shell or unrestricted filesystem access on the host, and never control its
+debugger or version control: they see them, and anything that runs on the host's machine runs
+only after the host's user allows that request (see [docs/SECURITY.md](docs/SECURITY.md)).

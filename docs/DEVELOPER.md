@@ -17,9 +17,12 @@
 | `core` | kotlinx-serialization | `ot` (TextOperation, ServerDocument, ClientDocument, TextDiff), `protocol` (messages, codec/validation), `files` (SafePath, SharingRules, ProjectFiles, MirrorWorkspace), `presence` (throttler, rate limiter), `session` (HostSession, CollabClient), `transport` (interfaces, in-memory) |
 | `transport` | core, Java-WebSocket, BouncyCastle | TLS identity & pinning, direct WSS server/client, relay host/guest transports, `TlsTunnel` (end-to-end TLS over the relay), `Invite` |
 | `relay-server` | transport | `RelayServer`, CLI `RelayMain`, fat JAR via Shadow |
-| `plugin` | transport + IntelliJ Platform | Settings, tool window, actions, `CollabSessionService`, `IdeBridge`, `VfsTreeWriter`, `PresenceRenderer` |
+| `plugin` | transport + IntelliJ Platform | Settings, tool window (`CollabPanel`, `ChatPanel`, `HostIdePanel`), actions, `CollabSessionService`, `IdeBridge`, `VfsTreeWriter`, `PresenceRenderer`; host side `HostConsoleSharing` (runs, builds, test events, run and command requests) and `HostIdeSharing` (debugger via `DebugSnapshot`, breakpoints, VCS status, code style); guest side `GuestRunMirror` (Run/Build windows, test trees) and `GuestIdeMirror` (execution point, breakpoints, code style) |
 
-`core` and `transport` never reference `com.intellij.*`.
+`core` and `transport` never reference `com.intellij.*`. The plugin compiles against the platform
+modules `intellij.platform.smRunner`, `intellij.platform.testRunner` and
+`intellij.platform.vcs.dvcs(.impl)` (declared with `bundledModule` in `plugin/build.gradle.kts`);
+at runtime they are part of IntelliJ IDEA.
 
 ## Localization
 
@@ -40,21 +43,23 @@ details) and messages sent over the network stay in English.
 ./gradlew :core:test :transport:test :relay-server:test   # protocol, OT, files, sessions, TLS, relay (~30 s)
 ./gradlew :plugin:test                                     # IntelliJ Platform tests (headless IDE)
 ./gradlew build                                            # everything, incl. plugin tests
-./gradlew :plugin:buildPlugin                              # plugin/build/distributions/OpenCollab-0.1.0.zip
+./gradlew :plugin:buildPlugin                              # plugin/build/distributions/OpenCollab-<version>.zip
 ./gradlew :plugin:verifyPlugin                             # JetBrains Plugin Verifier vs IntelliJ IDEA 2026.2.3
 ./gradlew :plugin:runIde                                   # sandbox IDE with the plugin
 ./gradlew :plugin:runIdeGuest                              # second sandbox IDE (separate config/system), in another terminal
-./gradlew :relay-server:shadowJar                          # relay-server/build/libs/opencollab-relay-0.1.0-all.jar
+./gradlew :relay-server:shadowJar                          # relay-server/build/libs/opencollab-relay-<version>-all.jar
 ./gradlew :relay-server:run --args="--self-signed --allow-anonymous-hosts --bind 127.0.0.1"   # local relay for development
 ```
 
 ### Trying it with two IDEs on one machine
 
 1. Terminal 1: `./gradlew :plugin:runIde`; open (or create) a project, *Settings | Tools |
-   OpenCollab*: listen address `127.0.0.1`; **Start Hosting**; **Copy Editor Invite**.
-2. Terminal 2: `./gradlew :plugin:runIdeGuest`; open an empty folder as a project; **Join…**,
-   paste the invitation.
-3. Open the same file in both IDEs and type.
+   OpenCollab*: listen address `127.0.0.1`; in the OpenCollab tool window **Share this
+   project**, then **Invite ▾** > editor invitation.
+2. Terminal 2: `./gradlew :plugin:runIdeGuest`; open an empty folder as a project; **Join with
+   an invitation**, paste the invitation.
+3. Open the same file in both IDEs and type. On the host, run a test and debug with a
+   breakpoint to see the guest's test tree, execution point and **Host** tab.
 
 ## Architecture
 
@@ -94,19 +99,21 @@ details) and messages sent over the network stay in English.
 
 | Suite | What it covers |
 |---|---|
-| `core` `TextOperationTest` | apply/compose/transform (randomised TP1 convergence, 300 runs each), surrogate-safe diff, caret transformation, wire validation |
-| `core` `SyncEngineTest` | 200 randomised multi-client simulations with random delays and duplicated deliveries; duplicate op detection; stale ops within history; stale ops beyond checkpoint recovered by resync; unsynced-document rebase; no double-apply after lost ack |
-| `core` `HostSessionTest` | snapshot excludes secrets/local state; 3 participants typing concurrently from threads converge; viewer edits and file creation rejected and rolled back; role changes only by host, never to HOST; traversal/exclusion/read-only checks for file requests; raw traversal paths rejected at protocol layer; invalid token & protocol version refused; no processing before authentication; presence relay/attribution/cleanup; incremental host file events incl. rename-to-excluded; unsaved document vs disk separation; pre-registration edits rebased; chunk hash verification |
+| `core` `TextOperationTest` | apply/compose/transform (randomised TP1 convergence and compose, 300 fixed seeds each; diff, 100), surrogate-safe diff, caret transformation, wire validation |
+| `core` `SyncEngineTest` | randomised multi-client simulations with random delays and duplicated deliveries (200 fixed seeds, plus 100 with many operations in flight per client); duplicate op detection; stale ops beyond checkpoint recovered by resync; invalid ops rejected; unsynced-document rebase; no double-apply after lost ack; an author's operations in flight transformed only against what it had not seen |
+| `core` `HostSessionTest` | snapshot excludes secrets/local state; 3 participants typing concurrently from threads converge; viewer edits and file creation rejected and rolled back; role changes only by host, never to HOST; traversal/exclusion/read-only checks for file requests; raw traversal paths rejected at protocol layer; invalid token & protocol version refused; no processing before authentication; presence relay/attribution/cleanup; carets never arrive before their text and stay on their text while others type; cursor bursts keep the final position; incremental host file events incl. rename-to-excluded; unsaved document vs disk separation; pre-registration edits rebased; chunk hash verification; ping and session age; chat relay, history, typing and rate limit; consoles reach guests only and are replayed; run and command requests (editors only, known targets, host's answer, expiry); breakpoint requests only from editors and in shared files; host IDE state only to guests announcing the feature, latest replayed to later joiners |
 | `core` `ReconnectTest` | offline edits recovered from history with participant identity resumed; recovery after history pruning without duplication; missed file events replayed; re-joining a mirror downloads only changes and keeps guest-local files; refusing non-empty folders |
 | `core` `LargeFileTest` | 120 MB file streamed to a guest and hash-verified with no temp files left; host stops at the 8 MB unacknowledged window and resumes on `chunkAck`; large host changes announced without content and fetched; guest uploads above 8 MB refused; oversize inline content rejected by the codec |
-| `core` `ProtocolAndRulesTest` | SafePath accept/reject lists, symlink escape, default/explicit/read-only sharing rules, codec validation of malformed messages and oversize frames, presence throttling and rate limiting |
+| `core` `ProtocolAndRulesTest` | SafePath accept/reject lists, symlink escape, default/explicit/read-only sharing rules, codec validation of malformed messages (incl. features, commands, breakpoints, VCS and debugger state) and oversize frames, project folder hidden in console text, presence throttling and rate limiting |
 | `transport` `TransportTest` | direct TLS messaging incl. 2 MB frames, wrong-fingerprint rejection, system-CA rejection of self-signed, `ws://` refused, TLS tunnel over an untrusted channel incl. wrong pin, invitation round-trip/validation, full host+guest session over direct TLS |
 | `transport` `PortForwardingTest`, `NetworkHintsTest` | public endpoint construction and validation, public-IP answer parsing, endpoint ordering (own subnet → public → other networks), detection of addresses from other private networks |
 | `plugin` `PortForwardingAndJoinTest` | plugin host with port forwarding advertises `wss://<public>:<port>` and a guest joins using only that endpoint; port 0 refused with forwarding; pending join completes when the new project opens; suggested folder avoids non-empty folders |
 | `plugin` `BundleTest` | English/Spanish key parity, placeholders, apostrophe rules, keys used in code exist, Spanish resolution |
+| `plugin` `CollabPanelTest` | the bottom tabs (chat, activity, host) stay in the tool window when leaving and joining again |
+| `plugin` `SharedTestTreeTest` | test events in the host's format build IntelliJ's test tree on a guest (suite, passed and failed tests, failure message) and locate the failing test on its line in the guest's copy |
 | `relay-server` `RelayServerTest` | end-to-end encrypted relay messaging (relay logs never contain content), wrong host secret, unknown room, impostor host behind relay, relay certificate pinning, room capacity, host disconnect |
 | `relay-server` `RelaySessionTest` | full session (snapshot + 2 guests co-editing) through the relay only |
-| `plugin` `PluginIntegrationTest` | real IntelliJ Platform 2026.2.3: applying operations to `Document`s; plugin **host** serving a remote guest over TLS (snapshot without secrets, guest→host document edits, host→guest edits, concurrent convergence, presence, guest file create via VFS, host VFS create mirrored, viewer refused); plugin **guest** joining a remote host (snapshot into VFS, edits without editor, edits from another guest applied to the IntelliJ document, files from others) |
+| `plugin` `PluginIntegrationTest` | real IntelliJ Platform 2026.2.3: plugin **host** serving a remote guest over TLS (snapshot without secrets, guest→host document edits, host→guest edits, concurrent convergence, presence, guest file create via VFS, host VFS create mirrored, viewer refused); plugin **guest** joining a remote host (snapshot into VFS, edits without editor, edits from another guest applied to the IntelliJ document, files from others) |
 | `plugin` `TwoIdeInstancesTest` | **two independent IntelliJ Platform processes** (separate JVMs and config/system dirs), both running the plugin, connected over TLS; both type 40 lines concurrently into the same document; asserts identical final text containing all 80 lines |
 
 ## Verification status
@@ -127,5 +134,9 @@ Verified by the automated tests above (all passing):
 
 Implemented but **not** covered by automated tests: the tool-window and settings UI (Swing), the
 painting of remote carets/selections (presence *delivery* to the bridge is tested), *Follow*,
-guest-side save propagation (`docSaved`), relay host re-registration after a relay restart, and
-read-only editor state for viewers (host-side rejection of viewer edits *is* tested).
+guest-side save propagation (`docSaved`), relay host re-registration after a relay restart,
+read-only editor state for viewers (host-side rejection of viewer edits *is* tested), and the
+IDE side of the host's IDE state: Run/Build window mirroring, collecting test events, debugger
+frames and variables, breakpoint mirroring, VCS status, code style and running approved
+commands (their messages and permissions *are* tested in `core`, and the guest test tree in
+`SharedTestTreeTest`).

@@ -5,7 +5,8 @@
 * IntelliJ IDEA **2026.2** or newer (build 262+). The free features are enough; the plugin only
   uses the IntelliJ Platform core.
 * Every participant installs the plugin in their own IDE. Nothing else of the guest's IDE is
-  changed: settings, themes, keymaps and other plugins stay local.
+  changed: settings, themes, keymaps and other plugins stay local. (While joined, the guest's
+  copy of the project uses the host's code style.)
 * Network: guests must reach the host's TCP port (LAN, VPN, or port forwarding with TLS), **or**
   everybody must reach a self-hosted OpenCollab relay (see [RELAY_SERVER.md](RELAY_SERVER.md)).
 
@@ -38,6 +39,9 @@ La interfaz del plugin está en **inglés** y **español** y sigue el idioma del
 | Additional excludes / Explicit includes / Read-only for guests | Sharing rules, see below |
 | Max file size | Files above this are never shared (default 10 MB, up to 2048 MB). Files larger than 8 MB are streamed to guests in chunks with flow control; guests can create/upload files up to 8 MB; text files up to 8 MB are edited live |
 | Cursor update interval | Minimum gap between cursor updates (default 0 ms: every change is sent at once) |
+| Share run, test and build output with guests | While hosting: guests see your runs, test trees and builds, and editors can ask to run a configuration or a build (default on) |
+| Show guests the debugger, breakpoints, Git branch and changes, and code style | While hosting (default on) |
+| Let editors ask to run terminal commands here | While hosting; each command needs your approval (default on) |
 
 ## Start a session (host)
 
@@ -119,7 +123,7 @@ OpenCollab mirror, so it can never overwrite your own data.
   links that open the
   file in the guest's copy, and the host's own folder is never shown (it appears as
   `$PROJECT_DIR$` before being mapped). The host can turn this off in *Settings | Tools |
-  OpenCollab | Run and Build*.
+  OpenCollab | Session*.
 * **Tests:** the host's test runs (JUnit, TestNG, Gradle, …) appear on guests as IntelliJ's test
   tree, with passed, failed and ignored tests, failure messages and stack traces;
   double-clicking a test opens it in the guest's copy.
@@ -132,7 +136,7 @@ OpenCollab mirror, so it can never overwrite your own data.
   command (for example `./gradlew test` or `git status`) in its project folder. The host sees
   the exact command and must allow each one (there is no "allow for this session" for
   commands); it then runs in a Run tab on the host, which the host can stop, and its output is
-  shared like any run. The host can turn this off in *Settings | Tools | OpenCollab*.
+  shared like any run. The host can turn this off in *Settings | Tools | OpenCollab | Session*.
 * **Debugger:** when the host's debugger stops, guests get a notification and the line is
   highlighted in their editor. The **Host** tab at the bottom of the tool window shows the
   frames (double-click to open) and the variables of the selected frame. Breakpoints are shared:
@@ -144,7 +148,9 @@ OpenCollab mirror, so it can never overwrite your own data.
   scheme), so *Reformat Code* gives the same result for everyone. `.editorconfig` and
   `.idea/codeStyles` are shared as project files too.
 * The host can stop sharing the debugger, breakpoints, Git status and code style in *Settings |
-  Tools | OpenCollab*; guests on older versions simply do not get these.
+  Tools | OpenCollab | Session*. Tests, debugger, breakpoints, Git, code style and commands need
+  OpenCollab 3.1.0 or newer on both sides; with an older participant the rest of the session
+  works as before.
 * **Status bar:** while in a session the IDE status bar shows the status (green connected, amber
   connecting, red disconnected), the number of people, the session time and unread chat
   messages; click it to open the tool window.
@@ -201,7 +207,12 @@ Rules are applied when the session starts.
   local to each IDE.
 * Binary files are synchronised as files only (no live editing); files above the size limit are
   not shared.
-* Terminals, debuggers, run configurations and servers are not shared.
+* Guests see the host's debugger but cannot step, resume or evaluate expressions; only line
+  breakpoints are shared (not conditions or other breakpoint kinds); variables are shown one
+  level deep.
+* The host's own Terminal tool window is not shared; guests ask for single commands instead.
+  Servers and ports on the host are not forwarded.
+* Guests see the host's branch and changed files but not diffs or history, and cannot commit.
 * A guest's own local-only files (created outside shared paths) stay local.
 * The relay forwards end-to-end encrypted traffic but learns metadata (IP addresses, room ids,
   traffic volume and timing).

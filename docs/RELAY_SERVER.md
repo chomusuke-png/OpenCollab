@@ -25,10 +25,11 @@ authenticated by the host itself with the invitation token.
 
 ```bash
 ./gradlew :relay-server:shadowJar
-# -> relay-server/build/libs/opencollab-relay-0.1.0-all.jar
+# -> relay-server/build/libs/opencollab-relay-X.Y.Z-all.jar
 ```
 
-Requires Java 21+ to run.
+Requires Java 21+ to run. `X.Y.Z` is the version being built (the same as the plugin's; see
+the README); replace it in the commands below.
 
 ## Run
 
@@ -48,7 +49,7 @@ openssl pkcs12 -export -in fullchain.pem -inkey privkey.pem -out relay.p12 -name
 
 ```bash
 export OPENCOLLAB_RELAY_KEYSTORE_PASSWORD='the export password'
-java -jar opencollab-relay-0.1.0-all.jar --keystore relay.p12 --host-secret-file relay-secret.txt --port 8443
+java -jar opencollab-relay-X.Y.Z-all.jar --keystore relay.p12 --host-secret-file relay-secret.txt --port 8443
 ```
 
 IDE settings: *Relay URL* `wss://relay.example.com:8443`, *Relay certificate fingerprint*
@@ -57,7 +58,7 @@ empty (verified against the JVM's CA list and host name).
 ### Option B — self-signed (small teams)
 
 ```bash
-java -jar opencollab-relay-0.1.0-all.jar --self-signed --host-secret-file relay-secret.txt --port 8443
+java -jar opencollab-relay-X.Y.Z-all.jar --self-signed --host-secret-file relay-secret.txt --port 8443
 ```
 
 The relay prints `Self-signed relay certificate fingerprint (SHA-256): AB:CD:…`. Enter it in
@@ -68,7 +69,7 @@ pin it automatically. A new fingerprint is generated at every start; use a PKCS#
 ### Option C — behind a TLS-terminating reverse proxy
 
 ```bash
-java -jar opencollab-relay-0.1.0-all.jar --plain-behind-proxy --bind 127.0.0.1 --port 8080 --host-secret-file relay-secret.txt
+java -jar opencollab-relay-X.Y.Z-all.jar --plain-behind-proxy --bind 127.0.0.1 --port 8080 --host-secret-file relay-secret.txt
 ```
 
 Plain mode is refused unless bound to the loopback interface. Example Caddy configuration:
@@ -107,7 +108,7 @@ After=network-online.target
 [Service]
 User=opencollab
 Environment=OPENCOLLAB_RELAY_KEYSTORE_PASSWORD=change-me
-ExecStart=/usr/bin/java -jar /opt/opencollab/opencollab-relay-0.1.0-all.jar --keystore /etc/opencollab/relay.p12 --host-secret-file /etc/opencollab/relay-secret.txt
+ExecStart=/usr/bin/java -jar /opt/opencollab/opencollab-relay-X.Y.Z-all.jar --keystore /etc/opencollab/relay.p12 --host-secret-file /etc/opencollab/relay-secret.txt
 Restart=on-failure
 NoNewPrivileges=true
 ProtectSystem=strict

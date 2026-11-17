@@ -95,9 +95,9 @@ who join later, and never sends one identical to the previous of its kind.
   a shared document are skipped (the document is authoritative); a host save sends `docSaved`
   and guests save their copy.
 
-Convergence is verified by randomized simulation (`SyncEngineTest`: 200 runs, 2-4 clients,
-random interleavings and duplicate deliveries), multi-threaded session tests, and the two-IDE
-end-to-end test.
+Convergence is verified by randomized simulation (`SyncEngineTest`: 200 runs with 2-4 clients,
+random interleavings and duplicate deliveries, plus 100 runs with many operations in flight per
+client), multi-threaded session tests, and the two-IDE end-to-end test.
 
 ## File synchronisation
 

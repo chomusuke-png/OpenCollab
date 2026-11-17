@@ -18,11 +18,12 @@
 | Reading traffic on the relay | End-to-end TLS tunnel inside the relay connection (`TlsTunnel`, JSSE). The relay forwards records it cannot decrypt |
 | Strangers joining | 192-bit random invitation tokens, compared in constant time; separate editor and viewer tokens; new tokens per session; handshake timeout; participant cap |
 | Strangers using your relay | Relay host secret (constant-time check), room ids are 128-bit random, room and peer limits, per-peer rate limit |
-| Privilege escalation | Roles live on the host. Every operation (`op`, `fileRequest`, `setRole`, `docSaved`) is authorised in `HostSession`, never in the UI only. A resumed participant keeps the role the host assigned, whatever token it presents. Nobody can be made host |
+| Privilege escalation | Roles live on the host. Every operation (`op`, `fileRequest`, `setRole`, `docSaved`, `runRequest`, `commandRequest`, `breakpointRequest`) is authorised in `HostSession`, never in the UI only. A resumed participant keeps the role the host assigned, whatever token it presents. Nobody can be made host |
 | Path traversal / escaping the project | `SafePath` rejects absolute paths, drive letters, `..`, `.`, empty segments, backslashes, `:` (NTFS streams), control characters, Windows device names; `resolveInside` re-checks after normalisation and refuses symbolic links or real paths outside the root, on both host and guest |
 | Leaking secrets | Default excludes (env files, keys, keystores, cloud credentials, Terraform state, local IDE files); `.git` can never be shared; excluded files are neither listed, read, written, nor broadcast; a rename into an excluded name becomes a delete for guests |
 | Guests planting code the host executes unknowingly | Guests cannot modify `.git` (hooks), IDE run configurations (`.idea`, `.run`, `*.run.xml`), wrapper scripts and CI workflows; directories containing unshared files cannot be deleted or moved by guests |
-| Guests running code on the host | Guests can only *ask* to run one of the host's existing run configurations or a project build; the host's user approves each request (or one participant for the session) in a notification. Viewers are refused by the host, requests are rate limited and expire after two minutes, and a request is never granted after it expired or its sender left. Console sharing can be turned off when output may contain secrets |
+| Guests running code on the host | Guests can only *ask*: to run one of the host's existing run configurations or a project build (the host's user approves each request, or one participant for the session), or to run a terminal command in the project folder (the exact command is shown and must be approved every time; there is no standing permission for commands). Viewers are refused by the host, requests are rate limited and expire after two minutes, and a request is never granted after it expired or its sender left. Commands run in a Run tab the host can stop. Command requests can be turned off |
+| Guests controlling the host's tools | Guests see the debugger, breakpoints and Git status but cannot step, resume, evaluate, commit or change branches. Editors can add and remove line breakpoints in shared files only (a breakpoint can pause the host's program, nothing more) |
 | Overwriting the host's unsaved work | A guest's file write/delete is refused while the host has unsaved changes in that file; shared documents are only changed through OT |
 | Overwriting a guest's data | Joining requires an empty folder or an existing OpenCollab mirror; resync only deletes files that came from the host |
 | Resource exhaustion | Frame size limits, file size limits (default 10 MB, configurable up to 2048 MB; large files are streamed from disk with an 8 MB acknowledgement window and written to a temporary file on the guest, never held in memory), 8 MB limit for guest uploads, message rate limit per peer (2 000/s), presence limit (120/s), chat limit (5 messages/s, 2 000 characters, no control characters; the host stamps the sender, and names and text are shown as plain text and escaped in notifications), bounded histories and logs |
@@ -32,11 +33,22 @@ Cryptography is provided by the JDK (JSSE TLS, SecureRandom, SHA-256) and Bouncy
 generate the self-signed X.509 certificate). No custom cryptography or NAT traversal is
 implemented.
 
-## Not shared — by design
+## What guests see of the host's IDE
 
-There is no terminal, debugger, run configuration, process or port sharing. These require an
-authorisation model and sandboxing that do not exist yet; a guest must never obtain a shell or
-arbitrary filesystem access on the host.
+With *Show guests the debugger, breakpoints, Git branch and changes, and code style* and console
+sharing on (both default), guests also receive:
+
+* **Console output** of everything the host runs and builds, and test results with stack traces.
+* **Debugger state** while paused: frame names, file and line, and the names, types and values
+  of the selected frame's variables. **Values may contain secrets** (tokens, passwords, personal
+  data in memory): turn this setting off before debugging such code in a session.
+* **Git**: the branch name and the paths of changed and unversioned shared files (not their
+  diffs). Excluded files are never listed.
+* **Code style** settings.
+
+Not shared, by design: the host's own Terminal tool window, a shell for guests, debugger
+control, version control actions, servers and ports. A guest must never obtain a shell or
+arbitrary filesystem access on the host; single commands run only after the host's approval.
 
 ## Known limitations
 

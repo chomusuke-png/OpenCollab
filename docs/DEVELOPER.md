@@ -2,7 +2,8 @@
 
 ## Prerequisites
 
-* JDK 21+ to run Gradle (tested with Temurin 25). Compilation uses a JDK 21 toolchain, detected
+* JDK 21+ to run Gradle (tested with Temurin 25). `core`, `transport` and `relay-server` compile with a
+  JDK 21 toolchain; the plugin compiles with JDK 25 (IntelliJ IDEA 2026.2 runs on Java 25). Toolchains are detected
   locally or provisioned automatically (foojay resolver).
 * Gradle is provided by the wrapper (9.6.0).
 * First build: internet access; the IntelliJ Platform Gradle Plugin (2.20.1) downloads IntelliJ
@@ -97,8 +98,12 @@ details) and messages sent over the network stay in English.
 | `core` `SyncEngineTest` | 200 randomised multi-client simulations with random delays and duplicated deliveries; duplicate op detection; stale ops within history; stale ops beyond checkpoint recovered by resync; unsynced-document rebase; no double-apply after lost ack |
 | `core` `HostSessionTest` | snapshot excludes secrets/local state; 3 participants typing concurrently from threads converge; viewer edits and file creation rejected and rolled back; role changes only by host, never to HOST; traversal/exclusion/read-only checks for file requests; raw traversal paths rejected at protocol layer; invalid token & protocol version refused; no processing before authentication; presence relay/attribution/cleanup; incremental host file events incl. rename-to-excluded; unsaved document vs disk separation; pre-registration edits rebased; chunk hash verification |
 | `core` `ReconnectTest` | offline edits recovered from history with participant identity resumed; recovery after history pruning without duplication; missed file events replayed; re-joining a mirror downloads only changes and keeps guest-local files; refusing non-empty folders |
+| `core` `LargeFileTest` | 120 MB file streamed to a guest and hash-verified with no temp files left; host stops at the 8 MB unacknowledged window and resumes on `chunkAck`; large host changes announced without content and fetched; guest uploads above 8 MB refused; oversize inline content rejected by the codec |
 | `core` `ProtocolAndRulesTest` | SafePath accept/reject lists, symlink escape, default/explicit/read-only sharing rules, codec validation of malformed messages and oversize frames, presence throttling and rate limiting |
 | `transport` `TransportTest` | direct TLS messaging incl. 2 MB frames, wrong-fingerprint rejection, system-CA rejection of self-signed, `ws://` refused, TLS tunnel over an untrusted channel incl. wrong pin, invitation round-trip/validation, full host+guest session over direct TLS |
+| `transport` `PortForwardingTest`, `NetworkHintsTest` | public endpoint construction and validation, public-IP answer parsing, endpoint ordering (own subnet → public → other networks), detection of addresses from other private networks |
+| `plugin` `PortForwardingAndJoinTest` | plugin host with port forwarding advertises `wss://<public>:<port>` and a guest joins using only that endpoint; port 0 refused with forwarding; pending join completes when the new project opens; suggested folder avoids non-empty folders |
+| `plugin` `BundleTest` | English/Spanish key parity, placeholders, apostrophe rules, keys used in code exist, Spanish resolution |
 | `relay-server` `RelayServerTest` | end-to-end encrypted relay messaging (relay logs never contain content), wrong host secret, unknown room, impostor host behind relay, relay certificate pinning, room capacity, host disconnect |
 | `relay-server` `RelaySessionTest` | full session (snapshot + 2 guests co-editing) through the relay only |
 | `plugin` `PluginIntegrationTest` | real IntelliJ Platform 2026.2.3: applying operations to `Document`s; plugin **host** serving a remote guest over TLS (snapshot without secrets, guest→host document edits, host→guest edits, concurrent convergence, presence, guest file create via VFS, host VFS create mirrored, viewer refused); plugin **guest** joining a remote host (snapshot into VFS, edits without editor, edits from another guest applied to the IntelliJ document, files from others) |

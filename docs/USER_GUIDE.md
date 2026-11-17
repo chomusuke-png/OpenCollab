@@ -36,7 +36,7 @@ La interfaz del plugin está en **inglés** y **español** y sigue el idioma del
 | Relay URL / fingerprint / host secret | See [RELAY_SERVER.md](RELAY_SERVER.md). The secret is stored in the IDE password safe |
 | Default invite role | Role suggested for new invitations |
 | Additional excludes / Explicit includes / Read-only for guests | Sharing rules, see below |
-| Max file size | Larger files are never transferred (default 10 MB) |
+| Max file size | Files above this are never shared (default 10 MB, up to 2048 MB). Files larger than 8 MB are streamed to guests in chunks with flow control; guests can create/upload files up to 8 MB; text files up to 8 MB are edited live |
 | Cursor update interval | Presence throttling (default 75 ms) |
 
 ## Start a session (host)
@@ -54,20 +54,40 @@ when the session ends.
 
 ## Join a session (guest)
 
-1. Create or pick an **empty folder** and open it as a project (*File | Open…*). A folder that you
-   used for an earlier OpenCollab session is also accepted — only files that changed are downloaded,
-   and files you created yourself are never deleted.
-2. In the **OpenCollab** tool window click **Join…**, paste the invitation and press **Join**.
-3. The shared project files are downloaded into the folder, and the IDE indexes them normally.
-   You can navigate, search, and open files in your own IDE.
+1. In any project window, open the **OpenCollab** tool window and click **Join…**.
+2. Paste the invitation and choose where the shared project goes:
+   * **This project folder** — only offered if it is empty (IDE files like `.idea` are fine) or a
+     folder used for an earlier OpenCollab session;
+   * **A new folder** (default when the current folder is not empty) — suggested as
+     `~/OpenCollab/<project>`. It is created, opened in a new window, and the join completes there
+     automatically.
+3. The shared project files are downloaded, and the IDE indexes them normally. You can navigate,
+   search, and open files in your own IDE.
 
-The plugin refuses to join into a non-empty folder so it can never overwrite your own data.
+Re-using a folder from an earlier session only downloads what changed, and files you created
+yourself are never deleted. The plugin never downloads into a non-empty folder that is not an
+OpenCollab mirror, so it can never overwrite your own data.
 
 ### Inviting a remote participant (different network)
 
-* **VPN / port forwarding:** set *Advertised hosts* to an address the guest can reach (VPN IP or
-  a DNS name pointing to your router) and forward the TCP port. The connection is TLS with the
-  certificate pinned by the invitation.
+* **Port forwarding (router):**
+  1. Pick a fixed *Port* in *Direct Connections* (e.g. `47800`; port forwarding cannot use `0`) and
+     keep the listen address `0.0.0.0`.
+  2. On your router, forward **TCP** of that port (or another external port) to this computer's
+     LAN IP, and allow the IDE through the firewall (Windows: *Private* networks).
+  3. In *Settings | Tools | OpenCollab | Port Forwarding* enable *The listen port is forwarded on
+     my router*. Leave *Public address* empty to detect it automatically when the session starts
+     (the plugin asks the *Public IP service*, `https://api.ipify.org` by default — only then), or
+     enter a dynamic DNS name. Set *External port* if the router uses a different port.
+  4. Start hosting and send a **new** invitation: it now also contains `wss://<public address>:<port>`.
+     Guests try their own network first, then the public address, so the same invitation works
+     for LAN and internet guests. The connection is TLS with the certificate pinned by the
+     invitation, so a public endpoint is as safe as a LAN one.
+
+  Port forwarding does not work behind carrier-grade NAT (CGNAT; your router's WAN address is
+  `100.64.x.x`–`100.127.x.x` or another private address). Use the relay or a VPN then.
+* **VPN:** connect both computers with a VPN (Tailscale, ZeroTier, WireGuard…) and set *Advertised
+  hosts* to the host's VPN address.
 * **Relay (recommended for the internet):** deploy the relay ([RELAY_SERVER.md](RELAY_SERVER.md)),
   then on the host enable *Offer the session through a self-hosted relay*, enter the relay URL,
   its certificate fingerprint if self-signed, and the relay host secret. Invitations then contain

@@ -6,7 +6,7 @@ import dev.opencollab.core.protocol.FileOpKind
 import dev.opencollab.core.protocol.MessageCodec
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.LinkOption
@@ -27,7 +27,8 @@ class MirrorWorkspace(val root: Path, private val writer: TreeWriter = NioTreeWr
     private val stateFile: Path = root.resolve(".opencollab").resolve("mirror.json")
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
     private val tracked = HashMap<String, String>()
-    private val assembling = HashMap<String, ByteArrayOutputStream>()
+    private val assembling = HashMap<String, Partial>()
+    private val tmpDir: Path = root.resolve(".opencollab").resolve("tmp")
 
     var sessionId: String = ""
         private set
@@ -103,26 +104,62 @@ class MirrorWorkspace(val root: Path, private val writer: TreeWriter = NioTreeWr
         null
     }
 
+    /** A file being received: streamed to a temporary file, hashed incrementally. */
+    private class Partial(val file: Path, val out: java.io.OutputStream, val digest: MessageDigest) {
+        var size = 0L
+    }
+
+    /** A fully received, verified file waiting to be moved into place. */
+    class Received(val path: String, val file: Path, val sha256: String, val size: Long)
+
     /**
-     * Accepts a file chunk; returns the complete content once the last chunk arrived and its
-     * hash matched (the caller then writes it), or null while incomplete.
+     * Accepts a file chunk. Data is streamed to a temporary file under `.opencollab/tmp`, so even
+     * very large files never sit in memory. Returns the verified file once the last chunk
+     * arrived and its SHA-256 matched, or null while incomplete.
      */
-    fun acceptChunk(path: String, offset: Long, data: ByteArray, last: Boolean, sha256: String, maxBytes: Long): ByteArray? {
-        val buffer = assembling.getOrPut(path) { ByteArrayOutputStream() }
-        if (offset != buffer.size().toLong()) {
-            assembling.remove(path)
-            throw IOException("Out-of-order chunk for $path")
+    fun acceptChunk(path: String, offset: Long, data: ByteArray, last: Boolean, sha256: String, maxBytes: Long): Received? {
+        val partial = assembling.getOrPut(path) {
+            Files.createDirectories(tmpDir)
+            val file = Files.createTempFile(tmpDir, "recv-", ".part")
+            Partial(file, Files.newOutputStream(file), MessageDigest.getInstance("SHA-256"))
         }
-        if (buffer.size() + data.size > maxBytes) {
+        try {
+            if (offset != partial.size) throw IOException("Out-of-order chunk for $path")
+            if (partial.size + data.size > maxBytes) throw IOException("File exceeds size limit: $path")
+            partial.out.write(data)
+            partial.digest.update(data)
+            partial.size += data.size
+            if (!last) return null
+            partial.out.close()
             assembling.remove(path)
-            throw IOException("File exceeds size limit: $path")
+            val actual = partial.digest.digest().joinToString("") { "%02x".format(it) }
+            if (actual != sha256) throw IOException("Checksum mismatch for $path")
+            return Received(path, partial.file, actual, partial.size)
+        } catch (e: IOException) {
+            discard(path, partial)
+            throw e
         }
-        buffer.write(data)
-        if (!last) return null
+    }
+
+    private fun discard(path: String, partial: Partial) {
         assembling.remove(path)
-        val bytes = buffer.toByteArray()
-        if (Hashes.sha256(bytes) != sha256) throw IOException("Checksum mismatch for $path")
-        return bytes
+        runCatching { partial.out.close() }
+        runCatching { Files.deleteIfExists(partial.file) }
+    }
+
+    /** Moves a verified file into the mirror. */
+    fun writeReceived(received: Received) {
+        try {
+            writer.writeFileFrom(received.path, received.file)
+            tracked[received.path] = received.sha256
+        } finally {
+            Files.deleteIfExists(received.file)
+        }
+    }
+
+    /** Drops partially received files (e.g. after a disconnect). */
+    fun discardPartials() {
+        assembling.entries.toList().forEach { (path, partial) -> discard(path, partial) }
     }
 
     fun writeReceived(path: String, bytes: ByteArray) {
@@ -139,7 +176,7 @@ class MirrorWorkspace(val root: Path, private val writer: TreeWriter = NioTreeWr
     fun apply(m: FileMutation, seq: Long) {
         when (m.kind) {
             FileOpKind.CREATE_FILE, FileOpKind.WRITE -> {
-                val bytes = MessageCodec.decodeBase64(m.contentBase64!!)
+                val bytes = MessageCodec.decodeBase64(m.contentBase64 ?: throw IOException("Content of ${m.path} must be fetched"))
                 writer.writeFile(m.path, bytes)
                 tracked[m.path] = Hashes.sha256(bytes)
             }
@@ -165,7 +202,7 @@ class MirrorWorkspace(val root: Path, private val writer: TreeWriter = NioTreeWr
     fun recordLocal(m: FileMutation) {
         when (m.kind) {
             FileOpKind.CREATE_FILE, FileOpKind.WRITE ->
-                tracked[m.path] = Hashes.sha256(MessageCodec.decodeBase64(m.contentBase64!!))
+                m.contentBase64?.let { tracked[m.path] = Hashes.sha256(MessageCodec.decodeBase64(it)) }
             FileOpKind.DELETE -> tracked.keys.removeIf { it == m.path || it.startsWith(m.path + "/") }
             FileOpKind.RENAME -> {
                 val dest = m.newPath!!

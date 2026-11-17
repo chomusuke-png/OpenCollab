@@ -13,13 +13,33 @@ import com.intellij.ui.dsl.builder.columns
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.ui.dsl.builder.rows
 import com.intellij.ui.dsl.builder.toNullableProperty
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
+import com.intellij.ui.components.JBCheckBox
+import com.intellij.ui.components.JBTextField
+import com.intellij.ui.dsl.builder.Cell
+import com.intellij.ui.dsl.builder.selected
 import dev.opencollab.core.files.SharingRules
 import dev.opencollab.plugin.OpenCollabBundle.message
+import dev.opencollab.transport.PortForwarding
 
 /** Settings | Tools | OpenCollab. */
 class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
     private val settings = OpenCollabSettings.getInstance()
     private val secretField = JBPasswordField()
+
+    /** Fills [field] with this machine's public IP, queried off the UI thread. */
+    private fun detectPublicIp(field: JBTextField, service: String) {
+        val modality = ModalityState.stateForComponent(field)
+        field.emptyText.text = message("settings.forwarding.detecting")
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val result = runCatching { PortForwarding.detectPublicIp(service) }
+            ApplicationManager.getApplication().invokeLater({
+                result.onSuccess { field.text = it }
+                    .onFailure { field.emptyText.text = message("settings.forwarding.detect.failed", it.message ?: "") }
+            }, modality)
+        }
+    }
 
     override fun createPanel(): DialogPanel {
         val s = settings.state
@@ -34,6 +54,31 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
                 row(message("settings.advertised")) {
                     textField().bindText(s::advertisedHosts).columns(COLUMNS_LARGE)
                         .comment(message("settings.advertised.comment"))
+                }
+            }
+            group(message("settings.group.forwarding")) {
+                lateinit var forwardingEnabled: Cell<JBCheckBox>
+                lateinit var publicField: Cell<JBTextField>
+                row {
+                    forwardingEnabled = checkBox(message("settings.forwarding.enable")).bindSelected(s::portForwarding)
+                        .comment(message("settings.forwarding.enable.comment"))
+                }
+                row(message("settings.forwarding.public")) {
+                    publicField = textField().bindText(s::publicAddress).columns(COLUMNS_LARGE)
+                        .comment(message("settings.forwarding.public.comment"))
+                        .enabledIf(forwardingEnabled.selected)
+                    button(message("settings.forwarding.detect")) { detectPublicIp(publicField.component, s.publicIpService) }
+                        .enabledIf(forwardingEnabled.selected)
+                }
+                row(message("settings.forwarding.port")) {
+                    intTextField(0..65535).bindIntText(s::externalPort)
+                        .comment(message("settings.forwarding.port.comment"))
+                        .enabledIf(forwardingEnabled.selected)
+                }
+                row(message("settings.forwarding.service")) {
+                    textField().bindText(s::publicIpService).columns(COLUMNS_LARGE)
+                        .comment(message("settings.forwarding.service.comment"))
+                        .enabledIf(forwardingEnabled.selected)
                 }
             }
             group(message("settings.group.relay")) {
@@ -57,7 +102,7 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
                         },
                     ).bindItem(s::defaultInviteRole.toNullableProperty())
                 }
-                row(message("settings.max.size")) { intTextField(1..100).bindIntText(s::maxFileSizeMb) }
+                row(message("settings.max.size")) { intTextField(1..SharingRules.MAX_ALLOWED_FILE_MB).bindIntText(s::maxFileSizeMb).comment(message("settings.max.size.comment")) }
                 row(message("settings.excludes")) {}
                 row {
                     textArea().bindText(s::extraExcludes).rows(3).align(AlignX.FILL)

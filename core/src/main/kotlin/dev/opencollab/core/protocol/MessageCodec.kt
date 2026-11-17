@@ -19,6 +19,16 @@ class ProtocolException(message: String) : RuntimeException(message)
 object MessageCodec {
     const val MAX_FRAME_CHARS = 16 * 1024 * 1024
     const val MAX_CHUNK_BYTES = 512 * 1024
+    /** Bytes sent per file chunk. */
+    const val CHUNK_BYTES = 256 * 1024
+    /** Files up to this size may travel inline in a file event/request; larger ones are streamed. */
+    const val MAX_INLINE_FILE_BYTES = 8 * 1024 * 1024
+    /** Unacknowledged bytes the host may have in flight per transfer (flow control). */
+    const val TRANSFER_WINDOW_BYTES = 8L * 1024 * 1024
+    /** Largest text document edited live (OT); bigger files are synchronised as files only. */
+    const val MAX_DOCUMENT_CHARS = 8 * 1024 * 1024
+
+    fun base64Length(bytes: Int): Int = (bytes + 2) / 3 * 4
     const val MAX_NAME = 64
     const val MAX_ID = 128
     const val MAX_OP_COMPONENTS = 100_000
@@ -95,6 +105,7 @@ object MessageCodec {
                 id(m.requestId); path(m.path)
                 check(m.offset >= 0 && m.dataBase64.length <= MAX_CHUNK_BYTES * 2, "Invalid chunk")
             }
+            is Message.FileChunkAck -> { id(m.requestId); check(m.receivedBytes >= 0, "Invalid acknowledgement") }
             is Message.Manifest -> { id(m.requestId); m.files.forEach { path(it.path) } }
             is Message.FileRequest -> { id(m.requestId); mutation(m.mutation) }
             is Message.FileEvent -> mutation(m.mutation)
@@ -135,9 +146,9 @@ object MessageCodec {
         path(mu.path)
         when (mu.kind) {
             FileOpKind.RENAME -> path(mu.newPath ?: throw ProtocolException("Rename without destination"))
-            FileOpKind.CREATE_FILE, FileOpKind.WRITE -> {
-                val content = mu.contentBase64 ?: throw ProtocolException("Missing content")
-                check(content.length <= MAX_FRAME_CHARS, "Content too large")
+            FileOpKind.CREATE_FILE, FileOpKind.WRITE -> mu.contentBase64?.let { content ->
+                // Larger files travel without inline content and are fetched in chunks.
+                check(content.length <= base64Length(MAX_INLINE_FILE_BYTES), "Inline content too large")
             }
             else -> Unit
         }

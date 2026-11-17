@@ -29,10 +29,12 @@ data class Invite(
     fun encode(): String = PREFIX + Base64.getUrlEncoder().withoutPadding()
         .encodeToString(json.encodeToString(serializer(), this).toByteArray(Charsets.UTF_8))
 
-    /** Direct endpoints first (short timeouts), then the relay. */
+    /** Direct endpoints first (same network, then public/forwarded, then other networks), then the relay. */
     fun connector(directTimeoutMillis: Int = 3_000): Connector {
         val connectors = mutableListOf<Connector>()
-        direct.forEach { connectors += WebSocketConnector(URI(it), TrustMode.Pinned(fingerprint), directTimeoutMillis) }
+        NetworkHints.orderEndpoints(direct).forEach {
+            connectors += WebSocketConnector(URI(it), TrustMode.Pinned(fingerprint), directTimeoutMillis)
+        }
         if (relay != null && room != null) {
             val trust = relayFingerprint?.let { TrustMode.PinnedRelay(it) } ?: TrustMode.SystemCertificateAuthorities
             connectors += RelayConnector(URI(relay), room, fingerprint, trust)

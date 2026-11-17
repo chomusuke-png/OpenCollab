@@ -22,3 +22,8 @@ is in the IDE log (*Help | Show Log in Explorer/Finder*), lines containing `Open
 | *Reconnecting in Ns* | The network dropped. The guest keeps editing locally and merges after reconnecting; if the host's history no longer covers the gap, the document is rebased on a snapshot |
 | Gradle: `Could not resolve idea:idea:2026.2.3` | First build needs internet access to `cache-redirector.jetbrains.com` / `www.jetbrains.com` |
 | Gradle on Windows: path too long errors | Clone/build in a short path (e.g. `C:\src\OpenCollab`) |
+| *Port forwarding needs a fixed listen port* | Set *Port* in *Direct Connections* to the port you forwarded (e.g. 47800) instead of `0` |
+| *Could not detect the public address* | The public IP service is unreachable. Enter your public IP or dynamic DNS name in *Port Forwarding \| Public address* |
+| Guest: *The host public address … did not answer* | Port forwarding is not working: forward TCP (not only UDP) to the host's current LAN IP, allow the IDE in the host firewall, check the external port, and check for CGNAT (router WAN address in `100.64.0.0/10` or private): then use the relay or a VPN |
+| LAN guests get the public address and fail | They try their own network first; if your router lacks NAT loopback the public endpoint simply fails and the LAN endpoint is used |
+| Join dialog: current folder not available | It is not empty. Keep *A new folder* selected: it is created, opened in a new window and joined automatically |

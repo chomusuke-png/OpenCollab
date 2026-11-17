@@ -73,11 +73,13 @@ class HostSession(
 ) : AutoCloseable {
     private val exec = SerialExecutor("opencollab-host")
     private val io = SerialExecutor("opencollab-host-io")
+    private val transferPool = java.util.concurrent.Executors.newCachedThreadPool(dev.opencollab.core.util.daemonThreadFactory("opencollab-transfer"))
 
     private inner class Peer(val connection: Connection) {
         var info: ParticipantInfo? = null
         var resumeKey: String = ""
         val subscriptions = HashSet<String>()
+        val transfers = java.util.concurrent.ConcurrentHashMap<String, Transfer>()
         var presence: Message.PresenceBroadcast? = null
         val presenceLimiter = RateLimiter(config.presencePerSecond, scheduler)
         val messageLimiter = RateLimiter(config.messagesPerSecond, scheduler)
@@ -155,6 +157,7 @@ class HostSession(
         }
         exec.close()
         io.close()
+        transferPool.shutdownNow()
     }
 
     // ---- Message handling (session thread) -----------------------------------------
@@ -269,6 +272,7 @@ class HostSession(
                 }
             }
             is Message.RequestFiles -> sendFiles(peer, m)
+            is Message.FileChunkAck -> peer.transfers[m.requestId]?.ack(m.receivedBytes)
             is Message.ResumeFiles -> resumeFiles(peer, m)
             is Message.FileRequest -> fileRequest(peer, m)
             is Message.OpenDocument -> openDocument(peer, m.path)
@@ -308,26 +312,93 @@ class HostSession(
 
     // ---- Files -------------------------------------------------------------------------
 
+    /**
+     * Streams the requested files from disk in chunks. At most [MessageCodec.TRANSFER_WINDOW_BYTES]
+     * may be unacknowledged, so a slow guest never makes the host buffer a whole large file.
+     * Each request runs on its own transfer thread; the SHA-256 travels with the last chunk.
+     */
     private fun sendFiles(peer: Peer, m: Message.RequestFiles) {
         val paths = m.paths.distinct()
-        io.execute {
+        val transfer = Transfer()
+        peer.transfers[m.requestId]?.cancel()
+        peer.transfers[m.requestId] = transfer
+        transferPool.execute {
             val missing = ArrayList<String>()
-            for (path in paths) {
-                val bytes = try { files.read(path) } catch (e: Exception) { null }
-                if (bytes == null) { missing += path; continue }
-                val sha = Hashes.sha256(bytes)
-                var offset = 0
-                do {
-                    val end = minOf(bytes.size, offset + MessageCodec.MAX_CHUNK_BYTES / 2)
-                    val chunk = MessageCodec.encodeBase64(bytes.copyOfRange(offset, end))
-                    val msg = Message.FileChunk(m.requestId, path, offset.toLong(), chunk, end == bytes.size, sha)
-                    exec.execute { peer.send(msg) }
-                    offset = end
-                } while (offset < bytes.size)
+            var sent = 0L
+            try {
+                for ((index, path) in paths.withIndex()) {
+                    val file = try { files.readableFile(path) } catch (e: Exception) { null }
+                    if (file == null) { missing += path; continue }
+                    try {
+                        sent = streamFile(peer, m.requestId, path, file, transfer, sent)
+                    } catch (e: TransferAborted) {
+                        missing += paths.subList(index, paths.size)
+                        break
+                    } catch (e: java.io.IOException) {
+                        missing += path
+                    }
+                }
+            } finally {
+                exec.execute {
+                    peer.transfers.remove(m.requestId, transfer)
+                    peer.send(Message.FilesDone(m.requestId, missing))
+                }
             }
-            exec.execute { peer.send(Message.FilesDone(m.requestId, missing)) }
         }
     }
+
+    private fun streamFile(peer: Peer, requestId: String, path: String, file: java.nio.file.Path, transfer: Transfer, alreadySent: Long): Long {
+        var sent = alreadySent
+        val digest = MessageDigest.getInstance("SHA-256")
+        java.nio.file.Files.newInputStream(file).use { input ->
+            val buffer = ByteArray(MessageCodec.CHUNK_BYTES)
+            var offset = 0L
+            while (true) {
+                val n = input.readNBytes(buffer, 0, buffer.size)
+                val last = n < buffer.size
+                if (n > 0) digest.update(buffer, 0, n)
+                if (offset + n > files.rules.maxFileBytes) throw java.io.IOException("$path grew beyond the size limit")
+                transfer.awaitWindow(sent, MessageCodec.TRANSFER_WINDOW_BYTES) { peer.open && !closed }
+                val sha = if (last) Hashes.run { digest.digest().toHex() } else ""
+                val msg = Message.FileChunk(requestId, path, offset, MessageCodec.encodeBase64(buffer.copyOf(n)), last, sha)
+                exec.execute { peer.send(msg) }
+                offset += n
+                sent += n
+                if (last) return sent
+            }
+        }
+    }
+
+    /** Flow-control state of one file request (thread-safe). */
+    private class Transfer {
+        private val lock = Object()
+        private var acked = 0L
+        private var cancelled = false
+
+        fun ack(bytes: Long) = synchronized(lock) {
+            if (bytes > acked) acked = bytes
+            lock.notifyAll()
+        }
+
+        fun cancel() = synchronized(lock) {
+            cancelled = true
+            lock.notifyAll()
+        }
+
+        /** Blocks until fewer than [window] sent bytes are unacknowledged. */
+        fun awaitWindow(sent: Long, window: Long, alive: () -> Boolean) = synchronized(lock) {
+            var idleSince = System.currentTimeMillis()
+            var lastAcked = acked
+            while (sent - acked >= window) {
+                if (cancelled || !alive()) throw TransferAborted()
+                if (acked != lastAcked) { lastAcked = acked; idleSince = System.currentTimeMillis() }
+                if (System.currentTimeMillis() - idleSince > 60_000) throw TransferAborted()
+                lock.wait(500)
+            }
+        }
+    }
+
+    private class TransferAborted : RuntimeException()
 
     private fun resumeFiles(peer: Peer, m: Message.ResumeFiles) {
         val oldest = fileLog.firstOrNull()?.seq ?: (fileSeq + 1)
@@ -385,8 +456,9 @@ class HostSession(
         return when {
             fromShared && toShared -> m
             fromShared -> FileMutation(FileOpKind.DELETE, m.path)
-            toShared -> files.read(m.newPath)?.let {
-                FileMutation(FileOpKind.CREATE_FILE, m.newPath, contentBase64 = MessageCodec.encodeBase64(it))
+            toShared -> files.readableFile(m.newPath)?.let {
+                // Large files are announced without content; guests fetch them in chunks.
+                FileMutation(FileOpKind.CREATE_FILE, m.newPath, contentBase64 = files.readInline(m.newPath)?.let(MessageCodec::encodeBase64))
             }
             else -> null
         }
@@ -419,7 +491,7 @@ class HostSession(
         docs[path]?.let { return it }
         if (!files.rules.isShared(path)) return null
         val text = documentSource.loadForSharing(path) ?: return null
-        if (text.length > files.rules.maxFileBytes) return null
+        if (text.length > minOf(files.rules.maxFileBytes, MessageCodec.MAX_DOCUMENT_CHARS.toLong())) return null
         val doc = ServerDocument(path, text, maxHistory = config.maxHistoryPerDocument)
         docs[path] = doc
         // The host's own editor bridge always follows shared documents.
@@ -507,6 +579,7 @@ class HostSession(
         if (!peer.open) return
         peer.open = false
         peer.handshakeTimer?.cancel()
+        peer.transfers.values.forEach { it.cancel() }
         peers.remove(peer.connection)
         peer.connection.close(reason)
         val info = peer.info ?: return

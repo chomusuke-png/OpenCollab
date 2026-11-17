@@ -101,6 +101,7 @@ class CollabClient(
     private var manifestSeq = 0L
     private var initialSync = false
     private val syncedPaths = ArrayList<String>()
+    private val receivedPerRequest = HashMap<String, Long>()
 
     // Document state (document executor only).
     private val docs = HashMap<String, ClientDocument>()
@@ -207,6 +208,8 @@ class CollabClient(
     private fun onConnectionLost(reason: String) {
         connection = null
         welcomed = false
+        receivedPerRequest.clear()
+        mirror?.discardPartials()
         if (userClosed || state == ClientState.DISCONNECTED) return
         handler.onLog("Connection lost: $reason")
         scheduleReconnect(reason)
@@ -352,19 +355,28 @@ class CollabClient(
 
     private fun onFileChunk(m: Message.FileChunk) {
         val ws = mirror ?: return
+        val data = try { MessageCodec.decodeBase64(m.dataBase64) } catch (e: ProtocolException) { ByteArray(0) }
         try {
-            val data = MessageCodec.decodeBase64(m.dataBase64)
             val complete = ws.acceptChunk(m.path, m.offset, data, m.last, m.sha256, sharingRules.maxFileBytes) ?: return
-            if (openPaths.contains(m.path)) return // the open document is synchronised via OT instead
-            ws.writeReceived(m.path, complete)
+            if (openPaths.contains(m.path)) {
+                java.nio.file.Files.deleteIfExists(complete.file) // the open document is synchronised via OT instead
+                return
+            }
+            ws.writeReceived(complete)
             syncedPaths += m.path
         } catch (e: Exception) {
             handler.onLog("Failed to write ${m.path}: ${e.message}")
+        } finally {
+            // Flow control: tell the host how much of this request has been processed (written to disk).
+            val received = (receivedPerRequest[m.requestId] ?: 0L) + data.size
+            receivedPerRequest[m.requestId] = received
+            send(Message.FileChunkAck(m.requestId, received))
         }
     }
 
     private fun onFilesDone(m: Message.FilesDone) {
         val ws = mirror ?: return
+        receivedPerRequest.remove(m.requestId)
         if (m.requestId.startsWith("restore-")) {
             for (missing in m.missing) {
                 if (ws.isTracked(missing)) runCatching { ws.deleteStale(missing) }
@@ -390,6 +402,12 @@ class CollabClient(
         val mu = e.mutation
         if (mu.kind == FileOpKind.WRITE && openPaths.contains(mu.path)) {
             ws.setFileEventSeq(maxOf(ws.fileEventSeq, e.seq)) // content is synchronised via OT
+            return
+        }
+        if ((mu.kind == FileOpKind.CREATE_FILE || mu.kind == FileOpKind.WRITE) && mu.contentBase64 == null) {
+            // Too large to travel inline: download it in acknowledged chunks.
+            ws.setFileEventSeq(maxOf(ws.fileEventSeq, e.seq))
+            send(Message.RequestFiles("restore-${requestCounter.incrementAndGet()}", listOf(mu.path)))
             return
         }
         try {

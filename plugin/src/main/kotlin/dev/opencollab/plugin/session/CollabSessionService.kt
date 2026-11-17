@@ -38,6 +38,7 @@ import dev.opencollab.plugin.settings.OpenCollabSettings
 import dev.opencollab.transport.DirectHostTransport
 import dev.opencollab.transport.Invite
 import dev.opencollab.transport.NetworkHints
+import dev.opencollab.transport.PortForwarding
 import dev.opencollab.transport.RelayHostTransport
 import dev.opencollab.transport.TlsIdentity
 import dev.opencollab.transport.TrustMode
@@ -202,11 +203,29 @@ class CollabSessionService(private val project: Project) : Disposable {
         var relayUrl: String? = null
         var room: String? = null
         if (s.enableDirect) {
+            val bind = s.bindAddress.ifBlank { "0.0.0.0" }
+            if (s.portForwarding) {
+                if (s.port == 0) throw IOException(message("error.forwarding.port"))
+                if (bind == "127.0.0.1" || bind == "::1" || bind == "localhost") throw IOException(message("error.forwarding.bind"))
+            }
             val advertised = OpenCollabSettings.lines(s.advertisedHosts).ifEmpty { null }
-            val direct = DirectHostTransport(s.bindAddress.ifBlank { "0.0.0.0" }, s.port, identity, advertised)
+            val direct = DirectHostTransport(bind, s.port, identity, advertised)
             direct.start(session::accept)
             transports += direct
             endpoints += direct.endpoints
+            if (s.portForwarding) {
+                val publicHost = s.publicAddress.trim().ifEmpty {
+                    try {
+                        PortForwarding.detectPublicIp(s.publicIpService)
+                    } catch (e: Exception) {
+                        throw IOException(message("error.forwarding.detect", e.message ?: ""), e)
+                    }
+                }
+                val publicEndpoint = PortForwarding.endpoint(publicHost, s.externalPort, direct.boundPort)
+                if (publicEndpoint !in endpoints) endpoints += publicEndpoint
+                val external = if (s.externalPort == 0) direct.boundPort else s.externalPort
+                appendLog(message("log.forwarding.endpoint", publicEndpoint, external, direct.boundPort))
+            }
         }
         if (s.enableRelay) {
             if (s.relayUrl.isBlank()) throw IOException(message("error.relay.url"))
@@ -277,6 +296,14 @@ class CollabSessionService(private val project: Project) : Disposable {
     // ---- Joining ------------------------------------------------------------------------
 
     /** Validates an invitation and the target folder; returns an error message or null. */
+    /** Validates an invitation only; returns an error message or null. */
+    fun checkInvite(inviteText: String): String? = try {
+        Invite.decode(inviteText)
+        null
+    } catch (e: IllegalArgumentException) {
+        e.message
+    }
+
     fun checkCanJoin(inviteText: String): String? {
         try {
             Invite.decode(inviteText)
@@ -330,10 +357,15 @@ class CollabSessionService(private val project: Project) : Disposable {
             !detail.contains("unreachable", ignoreCase = true)
         ) return null
         val foreign = NetworkHints.unreachableDirectEndpoints(invite)
-        return if (foreign.isNotEmpty() && invite.relay == null) {
-            message("hint.other.network", foreign.joinToString())
-        } else {
-            message("hint.timeout")
+        // Endpoints that are neither on our subnet nor another private network: public / forwarded.
+        val public = NetworkHints.publicEndpoints(invite)
+        return when {
+            public.isNotEmpty() && invite.relay == null -> {
+                val first = java.net.URI(public.first())
+                message("hint.forwarding.failed", first.host, first.port)
+            }
+            foreign.isNotEmpty() && invite.relay == null -> message("hint.other.network", foreign.joinToString())
+            else -> message("hint.timeout")
         }
     }
 

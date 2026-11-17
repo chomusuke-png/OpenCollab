@@ -50,6 +50,9 @@ class SharingRules(
     companion object {
         const val DEFAULT_MAX_FILE_BYTES: Long = 10L * 1024 * 1024
 
+        /** Upper bound for the configurable per-file limit (files are streamed in chunks). */
+        const val MAX_ALLOWED_FILE_MB = 2048
+
         val HARD_EXCLUDES = listOf(".git", ".hg", ".svn", ".opencollab")
 
         val DEFAULT_GUEST_READ_ONLY = listOf(

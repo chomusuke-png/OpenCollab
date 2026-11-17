@@ -26,6 +26,13 @@ class OpenCollabSettings : PersistentStateComponent<OpenCollabSettings.State> {
         var port: Int = 47800
         /** Overrides the advertised direct addresses (comma separated), e.g. a public DNS name. */
         var advertisedHosts: String = ""
+        /** The listen port is forwarded on the router: also advertise the public endpoint. */
+        var portForwarding: Boolean = false
+        /** Public IP or DNS name of the router; empty = detect with [publicIpService] when hosting starts. */
+        var publicAddress: String = ""
+        /** Port opened on the router; 0 = same as the listen port. */
+        var externalPort: Int = 0
+        var publicIpService: String = dev.opencollab.transport.PortForwarding.DEFAULT_PUBLIC_IP_SERVICE
         var enableRelay: Boolean = false
         var relayUrl: String = ""
         /** SHA-256 fingerprint for self-signed relays; empty = verify with system CAs. */
@@ -50,7 +57,7 @@ class OpenCollabSettings : PersistentStateComponent<OpenCollabSettings.State> {
         excludes = SharingRules.DEFAULT_EXCLUDES + lines(state.extraExcludes),
         includes = lines(state.includes),
         guestReadOnly = SharingRules.DEFAULT_GUEST_READ_ONLY + lines(state.extraGuestReadOnly),
-        maxFileBytes = state.maxFileSizeMb.coerceIn(1, 100).toLong() * 1024 * 1024,
+        maxFileBytes = state.maxFileSizeMb.coerceIn(1, SharingRules.MAX_ALLOWED_FILE_MB).toLong() * 1024 * 1024,
     )
 
     var relaySecret: String

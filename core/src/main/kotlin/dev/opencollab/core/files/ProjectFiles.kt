@@ -39,6 +39,10 @@ class FileAccessDenied(message: String) : SecurityException(message)
 /** Low-level tree operations with wire paths. Implementations must stay inside their root. */
 interface TreeWriter {
     fun writeFile(path: String, bytes: ByteArray)
+
+    /** Replaces [path] with the content of the local file [source] (which may be moved or deleted). */
+    fun writeFileFrom(path: String, source: Path) = writeFile(path, Files.readAllBytes(source))
+
     fun createDirectory(path: String)
     fun delete(path: String)
     fun rename(from: String, to: String)
@@ -59,6 +63,16 @@ class NioTreeWriter(private val root: Path) : TreeWriter {
             }
         } finally {
             Files.deleteIfExists(tmp)
+        }
+    }
+
+    override fun writeFileFrom(path: String, source: Path) {
+        val target = SafePath.resolveInside(root, path)
+        Files.createDirectories(target.parent)
+        try {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        } catch (e: IOException) {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING)
         }
     }
 
@@ -139,12 +153,22 @@ open class ProjectFiles(
         return sha
     }
 
-    /** Reads a shared file; null if it does not exist, is excluded, too large, or unsafe. */
-    fun read(path: String): ByteArray? {
+    /** The on-disk file for a shared path; null if it does not exist, is excluded, too large, or unsafe. */
+    fun readableFile(path: String): Path? {
         if (!rules.isShared(path)) return null
         val file = try { SafePath.resolveInside(root, path) } catch (e: SecurityException) { return null }
         if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) return null
         if (!rules.isSizeAllowed(Files.size(file))) return null
+        return file
+    }
+
+    /** Reads a whole shared file into memory (callers use it for small files only). */
+    fun read(path: String): ByteArray? = readableFile(path)?.let(Files::readAllBytes)
+
+    /** Reads a shared file only if it is small enough to travel inline in a file event. */
+    fun readInline(path: String): ByteArray? {
+        val file = readableFile(path) ?: return null
+        if (Files.size(file) > MessageCodec.MAX_INLINE_FILE_BYTES) return null
         return Files.readAllBytes(file)
     }
 
@@ -169,7 +193,10 @@ open class ProjectFiles(
         }
         when (m.kind) {
             FileOpKind.CREATE_FILE, FileOpKind.WRITE -> {
-                val bytes = MessageCodec.decodeBase64(m.contentBase64 ?: "")
+                val content = m.contentBase64 ?: throw FileAccessDenied(
+                    "${m.path} is larger than ${MessageCodec.MAX_INLINE_FILE_BYTES / (1024 * 1024)} MB; guests cannot upload files that large",
+                )
+                val bytes = MessageCodec.decodeBase64(content)
                 if (!rules.isSizeAllowed(bytes.size.toLong())) throw FileAccessDenied("File too large: ${m.path}")
                 if (isDirectory(m.path)) throw FileAccessDenied("A directory exists at ${m.path}")
                 if (m.kind == FileOpKind.CREATE_FILE && exists(m.path)) throw FileAccessDenied("Already exists: ${m.path}")

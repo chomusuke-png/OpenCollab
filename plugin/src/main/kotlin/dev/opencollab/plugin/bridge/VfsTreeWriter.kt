@@ -50,6 +50,24 @@ class VfsTreeWriter(
         }
     }
 
+    /**
+     * Large received files are moved into place with java.nio (never loaded into memory) and the
+     * VFS is refreshed for that file; small ones go through [writeFile] and a write action.
+     */
+    override fun writeFileFrom(path: String, source: Path) {
+        val target = SafePath.resolveInside(root, path)
+        if (!bulk && java.nio.file.Files.size(source) <= dev.opencollab.core.protocol.MessageCodec.MAX_INLINE_FILE_BYTES) {
+            writeFile(path, java.nio.file.Files.readAllBytes(source))
+            return
+        }
+        suppression.suppressPath(path)
+        nio.writeFileFrom(path, source)
+        if (!bulk) {
+            // Synchronous refresh from this background thread so editors and indexes see the new content.
+            LocalFileSystem.getInstance().refreshAndFindFileByNioFile(target)?.refresh(false, false)
+        }
+    }
+
     override fun createDirectory(path: String) {
         SafePath.resolveInside(root, path)
         if (bulk) {

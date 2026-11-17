@@ -133,7 +133,8 @@ class ProtocolAndRulesTest {
             """{"t":"presence","path":"a","caret":-1,"selections":[]}""",
             """{"t":"presence","path":"a","caret":1,"selections":[{"start":5,"end":2}]}""",
             """{"t":"fileRequest","requestId":"1","mutation":{"kind":"RENAME","path":"a"}}""",
-            """{"t":"fileRequest","requestId":"1","mutation":{"kind":"WRITE","path":"a"}}""",
+            """{"t":"fileRequest","requestId":"1","mutation":{"kind":"WRITE","path":"../a"}}""",
+            """{"t":"chunkAck","requestId":"1","receivedBytes":-5}""",
         )
         for (raw in invalid) assertThrows<ProtocolException>(raw) { MessageCodec.decode(raw) }
         assertThrows<ProtocolException> { MessageCodec.decode("x".repeat(MessageCodec.MAX_FRAME_CHARS + 1)) }

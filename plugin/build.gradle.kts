@@ -15,7 +15,8 @@ repositories {
 }
 
 kotlin {
-    jvmToolchain(21)
+    // IntelliJ IDEA 2026.2 runs on (and is compiled for) Java 25.
+    jvmToolchain(25)
     compilerOptions {
         // Inherit platform interface default methods instead of generating bridges that
         // re-invoke deprecated/experimental defaults (flagged by the Plugin Verifier).

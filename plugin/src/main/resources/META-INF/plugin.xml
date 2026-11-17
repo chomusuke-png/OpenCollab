@@ -16,6 +16,7 @@
                                  bundle="messages.OpenCollabBundle" key="configurable.name"
                                  instance="dev.opencollab.plugin.settings.OpenCollabConfigurable"/>
         <notificationGroup id="OpenCollab" displayType="BALLOON" key="notification.group.OpenCollab"/>
+        <postStartupActivity implementation="dev.opencollab.plugin.session.PendingJoinActivity"/>
     </extensions>
 
     <!-- Texts come from action.<id>.text / action.<id>.description in the bundle. -->

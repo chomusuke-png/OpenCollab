@@ -69,7 +69,8 @@ end-to-end test.
 ## File synchronisation
 
 * **Join**: `requestManifest` returns path, size and SHA-256 of every shared file. The guest
-  compares with its mirror, downloads only differing files (chunked, 256 KiB, hash-verified,
+  compares with its mirror, downloads only differing files (streamed from disk in 256 KiB chunks,
+  at most 8 MiB unacknowledged per request via `chunkAck`, assembled in `.opencollab/tmp`, SHA-256 verified,
   written atomically), and deletes files that it previously received but that no longer exist on
   the host. Local-only files of the guest are never deleted. The mirror state is stored in
   `.opencollab/mirror.json`.

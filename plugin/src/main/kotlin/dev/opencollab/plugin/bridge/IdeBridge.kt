@@ -136,7 +136,7 @@ class IdeBridge(
 
     private fun isTextShareable(file: VirtualFile, path: String): Boolean =
         !file.isDirectory && !file.fileType.isBinary && client.sharingRules.isShared(path) &&
-            client.sharingRules.isSizeAllowed(file.length)
+            client.sharingRules.isSizeAllowed(file.length) && file.length <= MessageCodec.MAX_DOCUMENT_CHARS
 
     // ---- Suppression ------------------------------------------------------------------
 
@@ -396,7 +396,7 @@ class IdeBridge(
                     FileMutation(FileOpKind.CREATE_DIRECTORY, path)
                 } else {
                     val content = readContent(event.file ?: return) ?: return
-                    FileMutation(FileOpKind.CREATE_FILE, path, contentBase64 = content)
+                    FileMutation(FileOpKind.CREATE_FILE, path, contentBase64 = content.base64)
                 }
             }
             is VFileCopyEvent -> {
@@ -404,7 +404,7 @@ class IdeBridge(
                 val path = pathOf(created) ?: return
                 if (isSuppressed(path)) return
                 val content = readContent(created) ?: return
-                FileMutation(FileOpKind.CREATE_FILE, path, contentBase64 = content)
+                FileMutation(FileOpKind.CREATE_FILE, path, contentBase64 = content.base64)
             }
             is VFileContentChangeEvent -> {
                 val path = relative(event.path) ?: return
@@ -412,7 +412,7 @@ class IdeBridge(
                 // Shared documents travel through OT; guests never upload their saves of them.
                 if (!isHost && client.isDocumentOpen(path)) return
                 val content = readContent(event.file) ?: return
-                FileMutation(FileOpKind.WRITE, path, contentBase64 = content)
+                FileMutation(FileOpKind.WRITE, path, contentBase64 = content.base64)
             }
             is VFileDeleteEvent -> {
                 val path = relative(event.path) ?: return
@@ -451,10 +451,19 @@ class IdeBridge(
         client.requestFileChange(mutation)
     }
 
-    private fun readContent(file: VirtualFile): String? {
+    /** Content of a changed file: inline when small, [base64] = null when guests must stream it. */
+    private class Content(val base64: String?)
+
+    /** Returns null when the change must not be sent at all. */
+    private fun readContent(file: VirtualFile): Content? {
         if (file.isDirectory || !file.isValid) return null
         if (!client.sharingRules.isSizeAllowed(file.length)) return null
-        return MessageCodec.encodeBase64(file.contentsToByteArray())
+        if (file.length > MessageCodec.MAX_INLINE_FILE_BYTES) {
+            if (isHost) return Content(null) // announced without content; guests download it in chunks
+            listener.onLog(OpenCollabBundle.message("bridge.too.large.upload", pathOf(file) ?: file.name, MessageCodec.MAX_INLINE_FILE_BYTES / (1024 * 1024)))
+            return null
+        }
+        return Content(MessageCodec.encodeBase64(file.contentsToByteArray()))
     }
 
     /** A directory that appears with content (unzip, paste) only produces one VFS event. */
@@ -466,9 +475,15 @@ class IdeBridge(
                 Files.walk(dir).use { stream ->
                     stream.filter { Files.isRegularFile(it, LinkOption.NOFOLLOW_LINKS) }.forEach { file ->
                         val rel = SafePath.relativize(root, file) ?: return@forEach
-                        if (!rules.isShared(rel) || !rules.isSizeAllowed(Files.size(file))) return@forEach
+                        val size = Files.size(file)
+                        if (!rules.isShared(rel) || !rules.isSizeAllowed(size)) return@forEach
+                        val inline = size <= MessageCodec.MAX_INLINE_FILE_BYTES
+                        if (!inline && !isHost) return@forEach // guests cannot upload large files
                         client.requestFileChange(
-                            FileMutation(FileOpKind.CREATE_FILE, rel, contentBase64 = MessageCodec.encodeBase64(Files.readAllBytes(file))),
+                            FileMutation(
+                                FileOpKind.CREATE_FILE, rel,
+                                contentBase64 = if (inline) MessageCodec.encodeBase64(Files.readAllBytes(file)) else null,
+                            ),
                         )
                     }
                 }

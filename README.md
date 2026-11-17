@@ -25,7 +25,7 @@ other's cursors and selections, and navigate the project in their own IDE.
 
 ## Quick start
 
-Prerequisites: JDK 21 or newer to run Gradle (a JDK 21 toolchain is used for compilation and is
+Prerequisites: JDK 21 or newer to run Gradle (JDK 21 and JDK 25 toolchains are used for compilation and are
 auto-provisioned if missing), internet access for the first build (it downloads IntelliJ IDEA
 2026.2.3, about 1.6 GB).
 

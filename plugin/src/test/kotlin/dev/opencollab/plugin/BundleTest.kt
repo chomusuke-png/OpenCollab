@@ -32,6 +32,16 @@ class BundleTest : BasePlatformTestCase() {
             assertEquals("placeholders differ for $key", placeholder.findAll(en).map { it.value }.toSet(), placeholder.findAll(es).map { it.value }.toSet())
             MessageFormat(en, Locale.ENGLISH)
             MessageFormat(es, Locale.forLanguageTag("es"))
+            // The IDE applies MessageFormat only when a message has parameters: without {n} a
+            // doubled apostrophe would be shown literally; with {n} a single one would vanish.
+            for ((lang, text) in listOf("en" to en, "es" to es)) {
+                val hasParams = placeholder.containsMatchIn(text)
+                if (hasParams) {
+                    assertFalse("single apostrophe in $lang $key", Regex("(?<!')'(?!')").containsMatchIn(text))
+                } else {
+                    assertFalse("doubled apostrophe in $lang $key", text.contains("''"))
+                }
+            }
         }
     }
 

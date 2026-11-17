@@ -24,7 +24,7 @@
 | Guests planting code the host executes unknowingly | Guests cannot modify `.git` (hooks), IDE run configurations (`.idea`, `.run`, `*.run.xml`), wrapper scripts and CI workflows; directories containing unshared files cannot be deleted or moved by guests |
 | Overwriting the host's unsaved work | A guest's file write/delete is refused while the host has unsaved changes in that file; shared documents are only changed through OT |
 | Overwriting a guest's data | Joining requires an empty folder or an existing OpenCollab mirror; resync only deletes files that came from the host |
-| Resource exhaustion | Frame size limits, file size limits (default 10 MB), message rate limit per peer (2 000/s), presence limit (40/s), bounded histories and logs |
+| Resource exhaustion | Frame size limits, file size limits (default 10 MB, configurable up to 2048 MB; large files are streamed from disk with an 8 MB acknowledgement window and written to a temporary file on the guest, never held in memory), 8 MB limit for guest uploads, message rate limit per peer (2 000/s), presence limit (40/s), bounded histories and logs |
 | Credentials | The plugin never reads or sends IDE credentials, tokens or settings. The relay host secret is stored in the IDE password safe and only sent to the relay |
 
 Cryptography is provided by the JDK (JSSE TLS, SecureRandom, SHA-256) and BouncyCastle (only to

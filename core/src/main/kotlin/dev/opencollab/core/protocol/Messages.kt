@@ -4,7 +4,8 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 
-const val PROTOCOL_VERSION = 1
+/** v2: streamed file transfer with chunk acknowledgements and content-less large file events. */
+const val PROTOCOL_VERSION = 2
 
 @Serializable
 enum class Role {
@@ -46,7 +47,9 @@ enum class FileOpKind { CREATE_FILE, CREATE_DIRECTORY, WRITE, DELETE, RENAME }
 
 /**
  * A filesystem change. For RENAME, [newPath] is the destination (moves are renames to
- * another directory). [contentBase64] is used by CREATE_FILE and WRITE.
+ * another directory). [contentBase64] carries the content of CREATE_FILE and WRITE when it is
+ * small enough to travel inline; for larger files it is null and receivers fetch the file with
+ * [Message.RequestFiles] (streamed in acknowledged chunks).
  */
 @Serializable
 data class FileMutation(
@@ -130,6 +133,10 @@ sealed class Message {
 
     @Serializable @SerialName("filesDone")
     data class FilesDone(val requestId: String, val missing: List<String>) : Message()
+
+    /** Flow control: total bytes of request [requestId] written by the receiver so far. */
+    @Serializable @SerialName("chunkAck")
+    data class FileChunkAck(val requestId: String, val receivedBytes: Long) : Message()
 
     /** Guest → host: request to change the shared project tree. */
     @Serializable @SerialName("fileRequest")

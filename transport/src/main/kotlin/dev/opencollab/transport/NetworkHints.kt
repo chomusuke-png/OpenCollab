@@ -50,6 +50,29 @@ object NetworkHints {
         return networks.none { sameSubnet(address, it.address.address, it.prefixLength) }
     }
 
+    /**
+     * Orders direct endpoints for connection attempts: addresses on one of this machine's
+     * subnets first, then public addresses / host names (port forwarding, VPN), and private
+     * addresses of other networks last (they only work through a VPN route).
+     */
+    fun orderEndpoints(endpoints: List<String>, networks: List<LocalNetwork> = localNetworks()): List<String> =
+        endpoints.sortedBy { endpoint ->
+            val host = runCatching { URI(endpoint).host }.getOrNull()?.trim('[', ']') ?: return@sortedBy 1
+            val ip = parseIpv4(host)
+            when {
+                ip == null || !isPrivate(ip) -> 1
+                networks.any { sameSubnet(ip, it.address.address, it.prefixLength) } -> 0
+                else -> 2
+            }
+        }
+
+    /** Direct endpoints that are public addresses or host names (port forwarding, DNS, VPN). */
+    fun publicEndpoints(invite: Invite): List<String> = invite.direct.filter { endpoint ->
+        val host = runCatching { URI(endpoint).host }.getOrNull()?.trim('[', ']') ?: return@filter false
+        val ip = parseIpv4(host)
+        ip == null || !isPrivate(ip)
+    }
+
     /** Direct endpoints of an invitation that point to a different private network. */
     fun unreachableDirectEndpoints(invite: Invite, networks: List<LocalNetwork> = localNetworks()): List<String> =
         invite.direct.filter { endpoint ->

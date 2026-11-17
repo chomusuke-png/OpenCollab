@@ -123,6 +123,12 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
             group(message("settings.group.presence")) {
                 row(message("settings.presence.interval")) { intTextField(0..1000).bindIntText(s::presenceIntervalMs) }
             }
+            group(message("settings.group.consoles")) {
+                row {
+                    checkBox(message("settings.share.consoles")).bindSelected(s::shareConsoles)
+                        .comment(message("settings.share.consoles.comment"))
+                }
+            }
         }
     }
 

@@ -44,6 +44,8 @@ class OpenCollabSettings : PersistentStateComponent<OpenCollabSettings.State> {
         var maxFileSizeMb: Int = 10
         /** Minimum gap between cursor updates during continuous movement; 0 = send every change at once. */
         var presenceIntervalMs: Int = 0
+        /** While hosting, send the output of runs, tests and builds to guests. */
+        var shareConsoles: Boolean = true
     }
 
     private var state = State()

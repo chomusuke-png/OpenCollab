@@ -70,6 +70,7 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
     }
     internal val bottomTabs = JBTabbedPane() // internal: checked by CollabPanelTest
     private val chatPanel = ChatPanel(service)
+    private val consolePanel = SharedConsolePanel(project, service, parent)
 
     // ---- Welcome (no session) ----------------------------------------------------------
     private val lastStatus = JBLabel().apply { foreground = UIUtil.getContextHelpForeground() }
@@ -126,6 +127,7 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
             add(JBScrollPane(logArea), BorderLayout.CENTER)
         }
         bottomTabs.addTab(message("panel.chat.title"), chatPanel)
+        bottomTabs.addTab(message("panel.console.title"), consolePanel)
         bottomTabs.addTab(message("panel.activity.title"), activity)
         bottomTabs.addChangeListener { chatPanel.selected = bottomTabs.selectedComponent === chatPanel }
 
@@ -362,6 +364,7 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         val unread = service.unreadChat
         bottomTabs.setTitleAt(0, if (unread > 0) message("panel.chat.unread", unread) else message("panel.chat.title"))
         chatPanel.refresh(inSession = mode is Mode.Hosting || mode is Mode.Joined)
+        consolePanel.refresh()
         // Ping updates refresh the panel every 2 s; leave the log (and where it is scrolled) alone unless it changed.
         val log = service.log().joinToString("\n")
         if (logArea.text != log) {

@@ -47,6 +47,7 @@ import dev.opencollab.core.protocol.Message
 import dev.opencollab.core.protocol.MessageCodec
 import dev.opencollab.core.protocol.ParticipantInfo
 import dev.opencollab.core.protocol.Role
+import dev.opencollab.core.protocol.RunTarget
 import dev.opencollab.core.protocol.TextRange
 import dev.opencollab.core.session.ClientHandler
 import dev.opencollab.core.session.ClientState
@@ -71,6 +72,11 @@ interface BridgeListener {
     fun onChatHistory(entries: List<ChatEntry>) {}
     /** Started following [participantId], or stopped (null). EDT. */
     fun onFollowingChanged(participantId: String?) {}
+    fun onConsoleStarted(started: Message.ConsoleStarted) {}
+    fun onConsoleOutput(output: Message.ConsoleOutput) {}
+    fun onConsoleEnded(ended: Message.ConsoleEnded) {}
+    fun onRunTargets(targets: List<RunTarget>) {}
+    fun onRunResponse(response: Message.RunResponse) {}
 }
 
 /**
@@ -188,6 +194,11 @@ class IdeBridge(
     override fun onLatencies(millis: Map<String, Int>) = listener.onLatencies(millis)
     override fun onChat(entry: ChatEntry) = listener.onChat(entry)
     override fun onChatHistory(entries: List<ChatEntry>) = listener.onChatHistory(entries)
+    override fun onConsoleStarted(started: Message.ConsoleStarted) = listener.onConsoleStarted(started)
+    override fun onConsoleOutput(output: Message.ConsoleOutput) = listener.onConsoleOutput(output)
+    override fun onConsoleEnded(ended: Message.ConsoleEnded) = listener.onConsoleEnded(ended)
+    override fun onRunTargets(targets: List<RunTarget>) = listener.onRunTargets(targets)
+    override fun onRunResponse(response: Message.RunResponse) = listener.onRunResponse(response)
 
     override fun onParticipantsChanged(participants: List<ParticipantInfo>) {
         this.participants.clear()

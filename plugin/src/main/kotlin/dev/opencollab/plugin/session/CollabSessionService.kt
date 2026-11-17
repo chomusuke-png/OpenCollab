@@ -18,7 +18,14 @@ import dev.opencollab.core.files.ProjectFiles
 import dev.opencollab.core.files.SafePath
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.wm.ToolWindowManager
+import dev.opencollab.core.files.ProjectDirMacro
 import dev.opencollab.core.protocol.ChatEntry
+import dev.opencollab.core.protocol.ConsoleStream
+import dev.opencollab.core.protocol.Message
+import dev.opencollab.core.protocol.RunTarget
+import dev.opencollab.core.session.RunRefusal
+import dev.opencollab.core.session.RunRequestInfo
+import java.util.concurrent.ConcurrentHashMap
 import dev.opencollab.core.protocol.FileMutation
 import dev.opencollab.core.protocol.ParticipantInfo
 import dev.opencollab.core.protocol.Role
@@ -67,6 +74,7 @@ class CollabSessionService(private val project: Project) : Disposable {
             val viewerInvite: String,
             val endpoints: List<String>,
             val fingerprint: String,
+            val consoles: HostConsoleSharing,
         ) : Mode
         class Joined(val client: CollabClient, val bridge: IdeBridge, val project: String) : Mode
     }
@@ -78,6 +86,60 @@ class CollabSessionService(private val project: Project) : Disposable {
     private val log = logger<CollabSessionService>()
     private val listeners = CopyOnWriteArrayList<Listener>()
     private val logLines = CopyOnWriteArrayList<String>()
+    /** A console of the host as a guest sees it: output kept in order, with this guest's paths. */
+    class SharedConsole(val id: String, val title: String, val requestedBy: String?) {
+        /** Guarded by itself. */
+        val parts = ArrayList<Pair<ConsoleStream, String>>()
+        internal var chars = 0
+        @Volatile var finished = false
+            internal set
+        @Volatile var exitCode: Int? = null
+            internal set
+    }
+
+    /** Console events for the UI, delivered on the EDT in order. */
+    interface ConsoleListener {
+        fun started(console: SharedConsole) {}
+        fun output(console: SharedConsole, stream: ConsoleStream, text: String) {}
+        fun ended(console: SharedConsole) {}
+        fun removed(console: SharedConsole) {}
+    }
+
+    private val consoles = LinkedHashMap<String, SharedConsole>() // guarded by itself
+    private val consoleListeners = CopyOnWriteArrayList<ConsoleListener>()
+    @Volatile private var projectDir: ProjectDirMacro? = null
+    /** What the host lets guests ask to run (empty while hosting or idle). */
+    @Volatile var runTargets: List<RunTarget> = emptyList()
+        private set
+    /** Our open run requests: request id → target name. */
+    private val runRequests = ConcurrentHashMap<String, String>()
+
+    fun consoles(): List<SharedConsole> = synchronized(consoles) { consoles.values.toList() }
+
+    fun addConsoleListener(listener: ConsoleListener, parent: Disposable) {
+        consoleListeners += listener
+        Disposer.register(parent) { consoleListeners -= listener }
+    }
+
+    private fun onConsoleEdt(block: (ConsoleListener) -> Unit) =
+        ApplicationManager.getApplication().invokeLater({ consoleListeners.forEach(block) }, ModalityState.any())
+
+    private fun clearConsoles() {
+        val old = synchronized(consoles) { consoles.values.toList().also { consoles.clear() } }
+        old.forEach { c -> onConsoleEdt { it.removed(c) } }
+        runTargets = emptyList()
+        runRequests.clear()
+    }
+
+    /** Guest: asks the host to run [target]; the host's user decides. False if it could not be sent. */
+    fun requestRun(target: RunTarget): Boolean {
+        val joined = mode as? Mode.Joined ?: return false
+        val id = joined.client.requestRun(target.id) ?: return false
+        runRequests[id] = target.name
+        appendLog(message("console.request.sent", target.name))
+        return true
+    }
+
     /** Chat of the current (or last) session, oldest first; kept after leaving so it can still be read. */
     private val chatEntries = CopyOnWriteArrayList<ChatEntry>()
     private var scheduler: SystemScheduler? = null
@@ -207,6 +269,48 @@ class CollabSessionService(private val project: Project) : Disposable {
             ApplicationManager.getApplication().invokeLater({ notifyChat(entry) }, ModalityState.any())
             fire()
         }
+        override fun onConsoleStarted(started: Message.ConsoleStarted) {
+            if (mode !is Mode.Joined) return
+            val console = SharedConsole(started.consoleId, started.title, started.requestedBy)
+            val dropped = synchronized(consoles) {
+                consoles[console.id] = console
+                generateSequence { if (consoles.size > MAX_CONSOLES) consoles.remove(consoles.keys.first()) else null }.toList()
+            }
+            dropped.forEach { c -> onConsoleEdt { it.removed(c) } }
+            onConsoleEdt { it.started(console) }
+        }
+        override fun onConsoleOutput(output: Message.ConsoleOutput) {
+            if (mode !is Mode.Joined) return
+            val console = synchronized(consoles) { consoles[output.consoleId] } ?: return
+            val text = projectDir?.reveal(output.text) ?: output.text
+            synchronized(console.parts) {
+                if (console.chars > MAX_CONSOLE_CHARS) return
+                console.parts += output.stream to text
+                console.chars += text.length
+            }
+            onConsoleEdt { it.output(console, output.stream, text) }
+        }
+        override fun onConsoleEnded(ended: Message.ConsoleEnded) {
+            val console = synchronized(consoles) { consoles[ended.consoleId] } ?: return
+            console.exitCode = ended.exitCode
+            console.finished = true
+            onConsoleEdt { it.ended(console) }
+        }
+        override fun onRunTargets(targets: List<RunTarget>) {
+            if (mode !is Mode.Joined) return
+            runTargets = targets
+            fire()
+        }
+        override fun onRunResponse(response: Message.RunResponse) {
+            val name = runRequests.remove(response.requestId) ?: return
+            if (response.accepted) {
+                appendLog(message("console.request.accepted", name))
+            } else {
+                val why = message("console.refused.${response.reason ?: RunRefusal.REFUSED}")
+                appendLog(message("console.request.refused", name, why))
+                ApplicationManager.getApplication().invokeLater({ notify(message("console.request.refused", name, why), NotificationType.WARNING) }, ModalityState.any())
+            }
+        }
         override fun onFollowingChanged(participantId: String?) {
             following = participantId
             fire()
@@ -233,6 +337,7 @@ class CollabSessionService(private val project: Project) : Disposable {
     fun startHosting() {
         if (mode != Mode.Idle) return
         mode = Mode.Starting
+        clearConsoles()
         chatEntries.clear()
         unreadChat = 0
         status = message("status.starting")
@@ -276,12 +381,16 @@ class CollabSessionService(private val project: Project) : Disposable {
             }
         }
         val documentSource = DocumentSource { path -> loadHostDocument(bridge, root, path) }
+        var consoleSharing: HostConsoleSharing? = null
         val session = HostSession(config, files, documentSource, sched, object : HostSessionListener {
             override fun onParticipantsChanged(participants: List<ParticipantInfo>) {
                 this@CollabSessionService.participants = participants
                 fire()
             }
             override fun onLog(message: String) = appendLog(message)
+            override fun onRunRequest(request: RunRequestInfo) {
+                consoleSharing?.onRunRequest(request)
+            }
         })
 
         val transports = mutableListOf<HostTransport>()
@@ -351,8 +460,12 @@ class CollabSessionService(private val project: Project) : Disposable {
             viewerInvite = invite(Role.VIEWER, config.viewerToken),
             endpoints = endpoints + listOfNotNull(room?.let { "relay $relayUrl (room ${it.take(6)}…)" }),
             fingerprint = identity.fingerprint,
+            consoles = HostConsoleSharing(project, root, session, s.shareConsoles) { appendLog(it) }.also { consoleSharing = it },
         )
-        ApplicationManager.getApplication().invokeAndWait({ bridge.install() }, ModalityState.any())
+        ApplicationManager.getApplication().invokeAndWait({
+            bridge.install()
+            hosting.consoles.install()
+        }, ModalityState.any())
         client.start()
         mode = hosting
         myRole = Role.HOST
@@ -421,6 +534,8 @@ class CollabSessionService(private val project: Project) : Disposable {
         )
         bridge.client = client
         bridge.install()
+        clearConsoles()
+        projectDir = ProjectDirMacro(root)
         chatEntries.clear()
         unreadChat = 0
         mode = Mode.Joined(client, bridge, invite.project)
@@ -520,6 +635,7 @@ class CollabSessionService(private val project: Project) : Disposable {
         mode = Mode.Idle
         when (m) {
             is Mode.Hosting -> {
+                Disposer.dispose(m.consoles)
                 m.bridge.client.close()
                 m.session.close()
                 m.transports.forEach { runCatching { it.close() } }
@@ -540,6 +656,8 @@ class CollabSessionService(private val project: Project) : Disposable {
         sessionStartedAt = null
         latencies = emptyMap()
         following = null
+        runTargets = emptyList()
+        runRequests.clear()
         status = finalStatus ?: message("status.idle")
         fire()
     }
@@ -559,6 +677,9 @@ class CollabSessionService(private val project: Project) : Disposable {
 
     companion object {
         private const val MAX_CHAT_KEPT = 500
+        /** Consoles a guest keeps, and characters of each (beyond that, output is not stored). */
+        private const val MAX_CONSOLES = 5
+        private const val MAX_CONSOLE_CHARS = 2_000_000
 
         fun getInstance(project: Project): CollabSessionService = project.getService(CollabSessionService::class.java)
     }

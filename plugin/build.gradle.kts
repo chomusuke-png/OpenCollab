@@ -29,6 +29,13 @@ dependencies {
 
     intellijPlatform {
         intellijIdea(providers.gradleProperty("platformVersion"))
+        // IntelliJ's test runner (test trees for the host's test runs). Part of the platform at
+        // runtime; only needed on the compile classpath.
+        bundledModule("intellij.platform.smRunner")
+        bundledModule("intellij.platform.testRunner")
+        // Branch names of the host's repositories (any VCS); also part of the platform at runtime.
+        bundledModule("intellij.platform.vcs.dvcs")
+        bundledModule("intellij.platform.vcs.dvcs.impl")
         testFramework(TestFrameworkType.Platform)
     }
 

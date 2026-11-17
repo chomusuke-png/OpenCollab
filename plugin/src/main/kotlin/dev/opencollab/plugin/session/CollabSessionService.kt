@@ -37,6 +37,7 @@ import dev.opencollab.plugin.bridge.IdeBridge
 import dev.opencollab.plugin.settings.OpenCollabSettings
 import dev.opencollab.transport.DirectHostTransport
 import dev.opencollab.transport.Invite
+import dev.opencollab.transport.NetworkHints
 import dev.opencollab.transport.RelayHostTransport
 import dev.opencollab.transport.TlsIdentity
 import dev.opencollab.transport.TrustMode
@@ -119,11 +120,13 @@ class CollabSessionService(private val project: Project) : Disposable {
                     ClientState.SYNCING -> message("status.syncing")
                     ClientState.RECONNECTING -> message("status.reconnecting", detail)
                     ClientState.CONNECTING -> message("status.connecting", (mode as Mode.Joined).project)
-
                 }
+                if (state == ClientState.CONNECTED) joinedOnce = true
                 if (state == ClientState.DISCONNECTED) {
                     appendLog(message("status.disconnected", detail))
-                    notify(message("notify.disconnected", detail), NotificationType.WARNING)
+                    val hint = if (!joinedOnce) connectionHint(detail) else null
+                    hint?.let(::appendLog)
+                    notify(listOfNotNull(message("notify.disconnected", detail), hint).joinToString("\n\n"), NotificationType.WARNING)
                 }
                 fire()
             }
@@ -306,8 +309,32 @@ class CollabSessionService(private val project: Project) : Disposable {
         myRole = invite.role
         status = message("status.connecting", invite.project)
         appendLog(message("log.joining", invite.project, roleName(invite.role), invite.fingerprint.take(23)))
+        joinedOnce = false
+        joiningInvite = invite
+        // Warn before the timeouts when the host advertised addresses of another private network.
+        val foreign = NetworkHints.unreachableDirectEndpoints(invite)
+        if (foreign.isNotEmpty() && invite.relay == null && foreign.size == invite.direct.size) {
+            appendLog(message("hint.other.network", foreign.joinToString()))
+        }
         client.start()
         fire()
+    }
+
+    @Volatile private var joinedOnce = false
+    @Volatile private var joiningInvite: Invite? = null
+
+    /** Explains a failed first connection in actionable terms (localized). */
+    private fun connectionHint(detail: String): String? {
+        val invite = joiningInvite ?: return null
+        if (!detail.contains("timed out", ignoreCase = true) && !detail.contains("refused", ignoreCase = true) &&
+            !detail.contains("unreachable", ignoreCase = true)
+        ) return null
+        val foreign = NetworkHints.unreachableDirectEndpoints(invite)
+        return if (foreign.isNotEmpty() && invite.relay == null) {
+            message("hint.other.network", foreign.joinToString())
+        } else {
+            message("hint.timeout")
+        }
     }
 
     // ---- Participants -------------------------------------------------------------------

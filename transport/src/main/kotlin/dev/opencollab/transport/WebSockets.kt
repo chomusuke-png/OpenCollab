@@ -119,18 +119,8 @@ class DirectHostTransport(
     companion object {
         fun localAddresses(bindAddress: String): List<String> {
             if (bindAddress != "0.0.0.0" && bindAddress != "::") return listOf(bindAddress)
-            val result = mutableListOf<String>()
-            try {
-                for (ni in NetworkInterface.getNetworkInterfaces()) {
-                    if (!ni.isUp || ni.isLoopback || ni.isVirtual) continue
-                    for (addr in ni.inetAddresses) {
-                        if (addr is Inet4Address && !addr.isLinkLocalAddress) result += addr.hostAddress
-                    }
-                }
-            } catch (_: Exception) {
-            }
-            if (result.isEmpty()) result += "127.0.0.1"
-            return result
+            val result = NetworkHints.lanAddresses()
+            return result.ifEmpty { listOf("127.0.0.1") }
         }
 
         private fun formatHost(h: String) = if (h.contains(':') && !h.startsWith("[")) "[$h]" else h

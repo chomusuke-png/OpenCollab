@@ -58,6 +58,46 @@ class HostSessionTest {
     }
 
     @Test
+    fun `chat is relayed to everyone with the sender stamped by the host and replayed to latecomers`() {
+        sampleProject()
+        Harness(host).use { h ->
+            val alice = h.guest("alice", guestDir("alice"))
+            val bob = h.guest("bob", guestDir("bob"), token = h.session.config.viewerToken)
+            awaitState(alice, ClientState.CONNECTED)
+            awaitState(bob, ClientState.CONNECTED)
+
+            assertTrue(alice.client.sendChat("  hola a todos \n"))
+            assertTrue(bob.client.sendChat("viewers can chat too"))
+            assertFalse(alice.client.sendChat("   "), "blank messages are not sent")
+            for (ide in listOf(alice, bob, h.hostIde)) eventually { ide.chat.size == 2 }
+
+            val first = bob.chat.first { it.text == "hola a todos" }
+            assertEquals(alice.client.participantId, first.participantId)
+            assertEquals("alice", first.displayName)
+            assertEquals(bob.client.participantId, alice.chat.first { it.text == "viewers can chat too" }.participantId)
+            assertEquals(alice.chat.map { it.id }, h.hostIde.chat.map { it.id }, "everyone sees the same order")
+
+            // Someone joining later receives the recent history.
+            val carol = h.guest("carol", guestDir("carol"))
+            awaitState(carol, ClientState.CONNECTED)
+            eventually { carol.chat.map { it.text } == listOf("hola a todos", "viewers can chat too") }
+        }
+    }
+
+    @Test
+    fun `chat floods are rate limited by the host`() {
+        sampleProject()
+        Harness(host).use { h ->
+            val alice = h.guest("alice", guestDir("alice"))
+            awaitState(alice, ClientState.CONNECTED)
+            repeat(30) { alice.client.sendChat("spam $it") }
+            eventually { alice.log.any { it.contains("Too many chat messages") } }
+            Thread.sleep(300)
+            assertTrue(h.hostIde.chat.size in 1..10, "relayed ${h.hostIde.chat.size} of 30")
+        }
+    }
+
+    @Test
     fun `snapshot shares project files but never secrets or local state`() {
         sampleProject()
         Harness(host).use { h ->

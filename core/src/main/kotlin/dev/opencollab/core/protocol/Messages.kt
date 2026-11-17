@@ -7,8 +7,9 @@ import kotlinx.serialization.json.JsonElement
 /**
  * v2: streamed file transfer with chunk acknowledgements and content-less large file events.
  * v3: the host pings participants and broadcasts their round-trip times; Welcome carries the session age.
+ * v4: session chat relayed and stamped by the host, with recent history for newcomers.
  */
-const val PROTOCOL_VERSION = 3
+const val PROTOCOL_VERSION = 4
 
 @Serializable
 enum class Role {
@@ -60,6 +61,18 @@ data class FileMutation(
     val path: String,
     val newPath: String? = null,
     val contentBase64: String? = null,
+)
+
+/** A chat message as relayed by the host, which assigns [id], the sender fields and [sentAtMillis]. */
+@Serializable
+data class ChatEntry(
+    val id: Long,
+    val participantId: String,
+    val displayName: String,
+    val colorIndex: Int,
+    val text: String,
+    /** Host wall-clock time (epoch milliseconds). */
+    val sentAtMillis: Long,
 )
 
 @Serializable
@@ -234,4 +247,17 @@ sealed class Message {
     /** Host → participants: each participant's round-trip time to the host, in milliseconds. */
     @Serializable @SerialName("latencies")
     data class Latencies(val millis: Map<String, Int>) : Message()
+
+    // ---- Chat -------------------------------------------------------------------------
+    /** Participant → host: a chat message; the host stamps the sender and relays it as [Chat]. */
+    @Serializable @SerialName("chatSend")
+    data class ChatSend(val text: String) : Message()
+
+    /** Host → everyone, sender included: a chat message in session order. */
+    @Serializable @SerialName("chat")
+    data class Chat(val entry: ChatEntry) : Message()
+
+    /** Host → a participant after (re)joining: the most recent messages, oldest first. Replaces any local copy. */
+    @Serializable @SerialName("chatHistory")
+    data class ChatHistory(val entries: List<ChatEntry>) : Message()
 }

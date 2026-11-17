@@ -135,6 +135,11 @@ class ProtocolAndRulesTest {
             """{"t":"fileRequest","requestId":"1","mutation":{"kind":"RENAME","path":"a"}}""",
             """{"t":"fileRequest","requestId":"1","mutation":{"kind":"WRITE","path":"../a"}}""",
             """{"t":"chunkAck","requestId":"1","receivedBytes":-5}""",
+            """{"t":"chatSend","text":""}""",
+            """{"t":"chatSend","text":"   "}""",
+            """{"t":"chatSend","text":"bell\u0007"}""",
+            """{"t":"chatSend","text":"${"x".repeat(MessageCodec.MAX_CHAT_CHARS + 1)}"}""",
+            """{"t":"chat","entry":{"id":1,"participantId":"p","displayName":"a\u0007","colorIndex":0,"text":"hi","sentAtMillis":0}}""",
         )
         for (raw in invalid) assertThrows<ProtocolException>(raw) { MessageCodec.decode(raw) }
         assertThrows<ProtocolException> { MessageCodec.decode("x".repeat(MessageCodec.MAX_FRAME_CHARS + 1)) }

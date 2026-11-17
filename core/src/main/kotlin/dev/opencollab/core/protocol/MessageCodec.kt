@@ -35,6 +35,8 @@ object MessageCodec {
     const val MAX_SELECTIONS = 64
     const val MAX_PATHS_PER_REQUEST = 20_000
     const val MAX_LATENCY_ENTRIES = 256
+    const val MAX_CHAT_CHARS = 2_000
+    const val MAX_CHAT_HISTORY = 500
 
     private val json = Json {
         classDiscriminator = "t"
@@ -144,6 +146,12 @@ object MessageCodec {
                 m.millis.forEach { (participant, millis) -> id(participant); check(millis >= 0, "Invalid latency") }
             }
             is Message.Welcome -> check(m.sessionAgeMillis >= 0, "Invalid session age")
+            is Message.ChatSend -> chatText(m.text)
+            is Message.Chat -> chatEntry(m.entry)
+            is Message.ChatHistory -> {
+                check(m.entries.size <= MAX_CHAT_HISTORY, "Chat history too long")
+                m.entries.forEach(::chatEntry)
+            }
             else -> Unit
         }
     }
@@ -158,6 +166,19 @@ object MessageCodec {
             }
             else -> Unit
         }
+    }
+
+    /** Non-blank, bounded, and free of control characters other than line breaks and tabs. */
+    private fun chatText(text: String) {
+        check(text.isNotBlank() && text.length <= MAX_CHAT_CHARS, "Invalid chat message")
+        check(text.none { it.isISOControl() && it != '\n' && it != '\t' }, "Invalid chat message")
+    }
+
+    private fun chatEntry(e: ChatEntry) {
+        id(e.participantId)
+        check(e.displayName.length <= MAX_NAME && e.displayName.none { it.isISOControl() }, "Invalid display name")
+        check(e.id >= 0 && e.sentAtMillis >= 0, "Invalid chat entry")
+        chatText(e.text)
     }
 
     private fun id(value: String) =

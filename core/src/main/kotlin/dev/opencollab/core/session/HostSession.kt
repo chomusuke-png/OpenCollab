@@ -7,6 +7,7 @@ import dev.opencollab.core.files.SafePath
 import dev.opencollab.core.files.toConfig
 import dev.opencollab.core.ot.ServerDocument
 import dev.opencollab.core.presence.RateLimiter
+import dev.opencollab.core.protocol.ChatEntry
 import dev.opencollab.core.protocol.DocHistoryEntry
 import dev.opencollab.core.protocol.FileMutation
 import dev.opencollab.core.protocol.FileOpKind
@@ -53,6 +54,9 @@ data class HostConfig(
     val messagesPerSecond: Int = 2_000,
     /** How often the host pings participants and broadcasts their round-trip times; 0 disables. */
     val pingIntervalMillis: Long = 2_000,
+    val chatPerSecond: Int = 5,
+    /** Recent chat messages kept for participants who join or reconnect later. */
+    val chatHistorySize: Int = 200,
 )
 
 fun randomToken(bytes: Int = 24): String {
@@ -73,6 +77,8 @@ class HostSession(
     private val documentSource: DocumentSource,
     private val scheduler: Scheduler,
     private val listener: HostSessionListener = object : HostSessionListener {},
+    /** Wall clock for chat timestamps ([Scheduler.nowMillis] is monotonic, not a date). */
+    private val wallClock: () -> Long = System::currentTimeMillis,
 ) : AutoCloseable {
     private val exec = SerialExecutor("opencollab-host")
     private val io = SerialExecutor("opencollab-host-io")
@@ -86,6 +92,7 @@ class HostSession(
         var presence: Message.PresenceBroadcast? = null
         val presenceLimiter = RateLimiter(config.presencePerSecond, scheduler)
         val messageLimiter = RateLimiter(config.messagesPerSecond, scheduler)
+        val chatLimiter = RateLimiter(config.chatPerSecond, scheduler)
         var handshakeTimer: Cancellable? = null
         var open = true
         /** Nonce of the unanswered ping, if any, and when it was sent. */
@@ -109,6 +116,8 @@ class HostSession(
     private var fileSeq = 0L
     private var nextColor = 0
     private var nextPingNonce = 1L
+    private val chatLog = ArrayDeque<ChatEntry>()
+    private var nextChatId = 1L
     private var closed = false
     private val startedAt = scheduler.nowMillis()
 
@@ -259,6 +268,7 @@ class HostSession(
                 sessionAgeMillis = (scheduler.nowMillis() - startedAt).coerceAtLeast(0),
             ),
         )
+        if (chatLog.isNotEmpty()) peer.send(Message.ChatHistory(chatLog.toList()))
         broadcast(Message.ParticipantJoined(info), except = peer)
         peers.values.forEach { other -> if (other !== peer) other.presence?.let(peer::send) }
         listener.onLog("${info.displayName} joined as ${info.role}${if (resumed != null) " (resumed)" else ""}")
@@ -303,6 +313,7 @@ class HostSession(
                 broadcastToSubscribers(m.path, Message.DocumentSaved(m.path, doc.revision), except = peer)
             }
             is Message.Presence -> presence(peer, m)
+            is Message.ChatSend -> chat(peer, m)
             else -> peer.send(Message.Error("protocol", "Unexpected message ${m::class.simpleName}"))
         }
     }
@@ -585,6 +596,21 @@ class HostSession(
         val broadcast = Message.PresenceBroadcast(peer.id, m.path, m.caret, m.selections)
         peer.presence = broadcast
         broadcast(broadcast, except = peer)
+    }
+
+    // ---- Chat --------------------------------------------------------------------------
+
+    /** Every participant may chat (viewers too). The host, not the sender, sets who and when. */
+    private fun chat(peer: Peer, m: Message.ChatSend) {
+        val info = peer.info ?: return
+        if (!peer.chatLimiter.tryAcquire()) {
+            peer.send(Message.Error("chat-rate", "Too many chat messages; slow down"))
+            return
+        }
+        val entry = ChatEntry(nextChatId++, info.id, info.displayName, info.colorIndex, m.text.trimEnd(), wallClock())
+        chatLog.addLast(entry)
+        while (chatLog.size > config.chatHistorySize) chatLog.removeFirst()
+        broadcast(Message.Chat(entry))
     }
 
     // ---- Latency -----------------------------------------------------------------------

@@ -4,6 +4,7 @@ import dev.opencollab.core.files.MirrorWorkspace
 import dev.opencollab.core.files.ProjectFiles
 import dev.opencollab.core.files.SharingRules
 import dev.opencollab.core.ot.TextOperation
+import dev.opencollab.core.protocol.ChatEntry
 import dev.opencollab.core.protocol.FileMutation
 import dev.opencollab.core.protocol.Message
 import dev.opencollab.core.transport.Connector
@@ -34,6 +35,9 @@ class FakeIde(name: String) : ClientHandler {
 
     override fun onWelcome(welcome: Message.Welcome) { this.welcome = welcome }
     override fun onLatencies(millis: Map<String, Int>) { latencies = millis }
+    val chat = CopyOnWriteArrayList<ChatEntry>()
+    override fun onChat(entry: ChatEntry) { chat += entry }
+    override fun onChatHistory(entries: List<ChatEntry>) { chat.clear(); chat.addAll(entries) }
 
     override fun onStateChanged(state: ClientState, detail: String) { states += state; stateDetails += detail }
     override fun applyRemoteEdit(path: String, op: TextOperation) { texts[path] = op.apply(texts.getValue(path)) }

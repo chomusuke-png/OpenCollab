@@ -6,6 +6,7 @@ import dev.opencollab.core.files.toRules
 import dev.opencollab.core.ot.ClientDocument
 import dev.opencollab.core.ot.TextOperation
 import dev.opencollab.core.presence.PresenceThrottler
+import dev.opencollab.core.protocol.ChatEntry
 import dev.opencollab.core.protocol.FileEntry
 import dev.opencollab.core.protocol.FileMutation
 import dev.opencollab.core.protocol.FileOpKind
@@ -47,6 +48,12 @@ interface ClientHandler {
 
     /** Each participant's round-trip time to the host in ms, refreshed every few seconds (I/O thread). */
     fun onLatencies(millis: Map<String, Int>) {}
+
+    /** A new chat message, including our own once the host relays it (I/O thread). */
+    fun onChat(entry: ChatEntry) {}
+
+    /** Recent chat after (re)joining; replaces what was shown before (I/O thread). */
+    fun onChatHistory(entries: List<ChatEntry>) {}
 
     /** Mirror files changed on disk (I/O thread). [initial] is true for the join snapshot. */
     fun onFilesChanged(paths: Collection<String>, initial: Boolean) {}
@@ -171,6 +178,18 @@ class CollabClient(
 
     fun setRole(participantId: String, role: Role) = send(Message.SetRole(participantId, role))
 
+    /**
+     * Sends a chat message; it shows up through [ClientHandler.onChat] once the host relays it.
+     * Returns false (nothing sent) for blank or over-long text or while not connected.
+     */
+    fun sendChat(text: String): Boolean {
+        // Control characters other than line breaks and tabs would get the message refused.
+        val clean = text.filter { !it.isISOControl() || it == '\n' || it == '\t' }.trim()
+        if (clean.isEmpty() || clean.length > MessageCodec.MAX_CHAT_CHARS || !welcomed) return false
+        send(Message.ChatSend(clean))
+        return true
+    }
+
     /** Re-downloads host versions of [paths] (e.g. to undo a refused local change). */
     fun restoreFromHost(paths: List<String>) {
         if (mirror == null || paths.isEmpty()) return
@@ -284,6 +303,8 @@ class CollabClient(
             is Message.Pong -> Unit
             is Message.Ping -> send(Message.Pong(m.nonce))
             is Message.Latencies -> handler.onLatencies(m.millis)
+            is Message.Chat -> handler.onChat(m.entry)
+            is Message.ChatHistory -> handler.onChatHistory(m.entries)
 
             is Message.Manifest -> onManifest(m)
             is Message.FileChunk -> onFileChunk(m)

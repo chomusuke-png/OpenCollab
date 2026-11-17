@@ -31,6 +31,7 @@ closes the connection.
 | Files | `requestManifest` → `manifest`; `requestFiles` → `fileChunk`* + `filesDone`; `fileRequest` → `result`; `fileEvent` (host broadcast, sequenced); `resumeFiles` → replayed `fileEvent`s + `result`, or `filesResyncRequired` |
 | Documents | `openDoc` → `docState`; `op` → `ack` (+ `remoteOp` to other subscribers) or `opRejected`; `resumeDoc` → `docCatchUp` or `docState`; `docUnavailable`; `docSaved`; `closeDoc` |
 | Presence | `presence` (sender) → `presenceBroadcast` (host stamps the sender id) |
+| Chat | `chatSend` (text) → `chat` to everyone, sender included (host assigns id, sender and time); `chatHistory` (last 200) after `welcome` |
 | Liveness | `ping`/`pong` (either direction; WebSocket pings are also used); `latencies` (host broadcast every 2 s: each participant's round-trip time to the host in ms, measured with host pings) |
 
 ## Document synchronisation (host-authoritative OT)

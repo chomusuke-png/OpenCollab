@@ -118,6 +118,8 @@ class ProtocolAndRulesTest {
         val m = Message.DocOp("src/A.kt", "op-1", 3, MessageCodec.opToJson(op))
         val decoded = MessageCodec.decode(MessageCodec.encode(m)) as Message.DocOp
         assertEquals(op, MessageCodec.opFromJson(decoded.op))
+        val presence = Message.Presence("a.kt", 3, listOf(TextRange(1, 3)), revision = 7)
+        assertEquals(presence, MessageCodec.decode(MessageCodec.encode(presence)))
 
         val invalid = listOf(
             """not json""",
@@ -132,6 +134,7 @@ class ProtocolAndRulesTest {
             """{"t":"hello","protocolVersion":$PROTOCOL_VERSION,"displayName":"a\u0007","token":"t"}""",
             """{"t":"presence","path":"a","caret":-1,"selections":[]}""",
             """{"t":"presence","path":"a","caret":1,"selections":[{"start":5,"end":2}]}""",
+            """{"t":"presence","path":"a","caret":1,"selections":[],"revision":-2}""",
             """{"t":"fileRequest","requestId":"1","mutation":{"kind":"RENAME","path":"a"}}""",
             """{"t":"fileRequest","requestId":"1","mutation":{"kind":"WRITE","path":"../a"}}""",
             """{"t":"chunkAck","requestId":"1","receivedBytes":-5}""",
@@ -187,11 +190,5 @@ class ProtocolAndRulesTest {
         assertEquals(10, accepted)
         clock.advance(500)
         assertEquals(5, (1..100).count { limiter.tryAcquire() })
-    }
-
-    @Test
-    fun `presence ranges survive serialization`() {
-        val p = Message.Presence("a.kt", 3, listOf(TextRange(1, 3)))
-        assertEquals(p, MessageCodec.decode(MessageCodec.encode(p)))
     }
 }

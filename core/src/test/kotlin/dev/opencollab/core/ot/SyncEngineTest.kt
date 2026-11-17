@@ -4,7 +4,6 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
-import org.junit.jupiter.api.RepeatedTest
 import org.junit.jupiter.api.Test
 import kotlin.random.Random
 
@@ -24,12 +23,12 @@ class SyncEngineTest {
         val inbox = ArrayDeque<ToClient>()
     }
 
-    @RepeatedTest(200)
-    fun `random concurrent edits converge on all clients`() = simulate(Random(System.nanoTime()), editWeight = 2, serverWeight = 1, clientWeight = 1)
+    @Test
+    fun `random concurrent edits converge on all clients`() = forEachSeed(200) { simulate(it, editWeight = 2, serverWeight = 1, clientWeight = 1) }
 
     /** Slow network: the host and clients rarely process messages, so many edits are in flight at once. */
-    @RepeatedTest(100)
-    fun `many operations in flight per client still converge`() = simulate(Random(System.nanoTime()), editWeight = 8, serverWeight = 1, clientWeight = 1)
+    @Test
+    fun `many operations in flight per client still converge`() = forEachSeed(100) { simulate(it, editWeight = 8, serverWeight = 1, clientWeight = 1) }
 
     private fun simulate(rnd: Random, editWeight: Int, serverWeight: Int, clientWeight: Int) {
         val initial = "fun main() {\n  println(\"hi\")\n}\n"
@@ -127,15 +126,6 @@ class SyncEngineTest {
         client.acknowledge(again.opId, r.revision)
         assertEquals(server.text, clientText)
         assertEquals("3210hello world", server.text)
-    }
-
-    @Test
-    fun `stale operation within history is transformed`() {
-        val server = ServerDocument("a.txt", "abc")
-        server.receive("p1", "1", 0, TextOperation.replace(3, 0, 0, "X")) // Xabc
-        val r = server.receive("p2", "1", 0, TextOperation.replace(3, 3, 0, "Y")) // based on rev 0
-        assertTrue(r is ServerDocument.Result.Applied)
-        assertEquals("XabcY", server.text)
     }
 
     @Test

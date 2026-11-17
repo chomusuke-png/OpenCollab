@@ -3,7 +3,6 @@ package dev.opencollab.core.ot
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
-import org.junit.jupiter.api.RepeatedTest
 import org.junit.jupiter.api.Test
 import kotlin.random.Random
 
@@ -15,6 +14,17 @@ internal fun randomString(rnd: Random, max: Int = 6): String {
         if (ch.isHighSurrogate()) { sb.append("😀") } else if (!ch.isLowSurrogate()) sb.append(ch)
     }
     return sb.toString().ifEmpty { "x" }
+}
+
+/** Runs [check] once per fixed seed, so a failure names the seed that reproduces it. */
+internal fun forEachSeed(count: Int, check: (Random) -> Unit) {
+    for (seed in 0 until count) {
+        try {
+            check(Random(seed))
+        } catch (e: Throwable) {
+            throw AssertionError("failed with seed $seed: ${e.message}", e)
+        }
+    }
 }
 
 /** Random operation applicable to [text]; never splits surrogate pairs. */
@@ -89,9 +99,8 @@ class TextOperationTest {
         assertEquals("01Z9", aPrime.apply(b.apply(base)))
     }
 
-    @RepeatedTest(300)
-    fun `transform satisfies convergence (TP1) on random input`() {
-        val rnd = Random(System.nanoTime())
+    @Test
+    fun `transform satisfies convergence (TP1) on random input`() = forEachSeed(300) { rnd ->
         val base = randomString(rnd, 30)
         val a = randomOp(rnd, base)
         val b = randomOp(rnd, base)
@@ -99,9 +108,8 @@ class TextOperationTest {
         assertEquals(bPrime.apply(a.apply(base)), aPrime.apply(b.apply(base)))
     }
 
-    @RepeatedTest(300)
-    fun `compose equals sequential application`() {
-        val rnd = Random(System.nanoTime())
+    @Test
+    fun `compose equals sequential application`() = forEachSeed(300) { rnd ->
         val base = randomString(rnd, 30)
         val a = randomOp(rnd, base)
         val afterA = a.apply(base)
@@ -109,9 +117,8 @@ class TextOperationTest {
         assertEquals(b.apply(afterA), a.compose(b).apply(base))
     }
 
-    @RepeatedTest(100)
-    fun `diff produces an operation reaching the target`() {
-        val rnd = Random(System.nanoTime())
+    @Test
+    fun `diff produces an operation reaching the target`() = forEachSeed(100) { rnd ->
         val from = randomString(rnd, 40)
         val to = randomOp(rnd, from).apply(from)
         assertEquals(to, TextDiff.diff(from, to).apply(from))

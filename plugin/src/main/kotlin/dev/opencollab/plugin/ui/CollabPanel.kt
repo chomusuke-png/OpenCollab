@@ -68,7 +68,7 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         isEditable = false
         lineWrap = PropertiesComponent.getInstance().getBoolean(WRAP_KEY, false)
     }
-    private val bottomTabs = JBTabbedPane()
+    internal val bottomTabs = JBTabbedPane() // internal: checked by CollabPanelTest
     private val chatPanel = ChatPanel(service)
 
     // ---- Welcome (no session) ----------------------------------------------------------
@@ -175,10 +175,14 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
     // ---- Layout per mode ----------------------------------------------------------------
 
     /** Welcome screen outside a session, session view inside one; the chat/activity tabs move between them. */
-    private fun showView(inSession: Boolean) {
+    internal fun showView(inSession: Boolean) {
         if (shownInSession == inSession) return
         shownInSession = inSession
         removeAll()
+        // The tabs are one component moving between views. Swing reparents it silently, but the
+        // splitter still remembers it and ignores setting the same component again, so after
+        // leave + rejoin the bottom half stayed empty: clear the splitter's reference first.
+        splitter.secondComponent = null
         if (inSession) {
             splitter.secondComponent = bottomTabs
             add(sessionView, BorderLayout.CENTER)

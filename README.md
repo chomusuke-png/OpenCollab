@@ -40,9 +40,9 @@ auto-provisioned if missing), internet access for the first build (it downloads 
 On Windows use `gradlew.bat` instead of `./gradlew`.
 
 Install the ZIP via *Settings | Plugins | ⚙ | Install Plugin from Disk…*, open the
-**OpenCollab** tool window (right side bar), and click **Start Hosting**. Send the copied
+**OpenCollab** tool window (right side bar), and click **Share this project**. Send the copied
 invitation (`oc1:…`) privately to a teammate, who opens an **empty folder** as a project and
-clicks **Join…**.
+clicks **Join with an invitation**.
 
 ## Versions, releases and updates
 

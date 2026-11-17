@@ -96,6 +96,9 @@ class CollabSessionService(private val project: Project) : Disposable {
     /** Round-trip time to the host per participant id, in ms. */
     @Volatile var latencies: Map<String, Int> = emptyMap()
         private set
+    /** Participant this IDE is following, if any. */
+    @Volatile var following: String? = null
+        private set
     /** Messages from others that arrived while the chat was not on screen. */
     @Volatile var unreadChat: Int = 0
         private set
@@ -108,7 +111,6 @@ class CollabSessionService(private val project: Project) : Disposable {
                 fire()
             }
         }
-
 
     fun addListener(l: Listener, parent: Disposable) {
         listeners += l
@@ -203,6 +205,10 @@ class CollabSessionService(private val project: Project) : Disposable {
             while (chatEntries.size > MAX_CHAT_KEPT) chatEntries.removeAt(0)
             if (!chatOnScreen && entry.participantId != ownParticipantId()) unreadChat++
             ApplicationManager.getApplication().invokeLater({ notifyChat(entry) }, ModalityState.any())
+            fire()
+        }
+        override fun onFollowingChanged(participantId: String?) {
+            following = participantId
             fire()
         }
         override fun onChatHistory(entries: List<ChatEntry>) {
@@ -464,10 +470,38 @@ class CollabSessionService(private val project: Project) : Disposable {
         (mode as? Mode.Hosting)?.session?.kick(participantId)
     }
 
-    fun follow(participantId: String): Boolean = when (val m = mode) {
-        is Mode.Hosting -> m.bridge.follow(participantId)
-        is Mode.Joined -> m.bridge.follow(participantId)
-        else -> false
+    /** How the session is doing, for status colors: null when not in a session. */
+    enum class Health { OK, BUSY, DOWN }
+
+    fun health(): Health? = when (val m = mode) {
+        Mode.Idle -> null
+        Mode.Starting -> Health.BUSY
+        is Mode.Hosting -> Health.OK
+        is Mode.Joined -> when (m.client.state) {
+            ClientState.CONNECTED -> Health.OK
+            ClientState.DISCONNECTED -> Health.DOWN
+            else -> Health.BUSY
+        }
+    }
+
+    /** "01:23:45" since the host started the session, or null when not in one. */
+    fun sessionClock(): String? {
+        val started = sessionStartedAt ?: return null
+        val seconds = ((System.currentTimeMillis() - started) / 1000).coerceAtLeast(0)
+        return "%02d:%02d:%02d".format(seconds / 3600, seconds / 60 % 60, seconds % 60)
+    }
+
+    private fun bridge(): IdeBridge? = when (val m = mode) {
+        is Mode.Hosting -> m.bridge
+        is Mode.Joined -> m.bridge
+        else -> null
+    }
+
+    /** Starts following; false if they have no shared file open yet (following still starts). EDT. */
+    fun follow(participantId: String): Boolean = bridge()?.startFollowing(participantId) ?: false
+
+    fun stopFollowing() {
+        bridge()?.stopFollowing()
     }
 
     fun ownParticipantId(): String? = when (val m = mode) {
@@ -505,6 +539,7 @@ class CollabSessionService(private val project: Project) : Disposable {
         myRole = null
         sessionStartedAt = null
         latencies = emptyMap()
+        following = null
         status = finalStatus ?: message("status.idle")
         fire()
     }

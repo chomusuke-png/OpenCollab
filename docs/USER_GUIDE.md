@@ -42,10 +42,11 @@ La interfaz del plugin está en **inglés** y **español** y sigue el idioma del
 ## Start a session (host)
 
 1. Open the project you want to share.
-2. In the **OpenCollab** tool window click **Start Hosting** (or *Tools | OpenCollab | Start
-   Hosting Session*). The panel shows the endpoints and the TLS certificate fingerprint of this
-   session.
-3. Click **Copy Editor Invite** or **Copy Viewer Invite** and send the text (`oc1:…`) to the
+2. In the **OpenCollab** tool window click **Share this project** (or *Tools | OpenCollab | Start
+   Hosting Session*). *Connection details* under the buttons shows the endpoints and the TLS
+   certificate fingerprint of this session.
+3. Click **Invite ▾**, choose the editor (can edit) or viewer (read only) invitation, and send
+   the copied text (`oc1:…`) to the
    participant over a private channel (direct message, password manager share…). **An invitation
    is a secret**: anybody holding it can join with that role while the session runs.
 
@@ -54,7 +55,7 @@ when the session ends.
 
 ## Join a session (guest)
 
-1. In any project window, open the **OpenCollab** tool window and click **Join…**.
+1. In any project window, open the **OpenCollab** tool window and click **Join with an invitation**.
 2. Paste the invitation and choose where the shared project goes:
    * **This project folder** — only offered if it is empty (IDE files like `.idea` are fine) or a
      folder used for an earlier OpenCollab session;
@@ -99,10 +100,18 @@ OpenCollab mirror, so it can never overwrite your own data.
 * **Editing:** open any shared file and type. Concurrent edits are merged by the host; everybody
   converges to the same text. Unsaved changes are shared live; saving on the host saves the
   document for all participants.
-* **Cursors and selections:** other participants' carets appear with a colored name tag, their
-  selections as a translucent highlight.
-* **Follow:** double-click a participant in the tool window (or right-click > *Follow*) to open
-  the file they are looking at, at their caret.
+* **Cursors and selections:** other participants' carets appear in their color, their
+  selections as a translucent highlight. The name tag above a caret shows for three seconds after
+  that person moves or types, then fades so it does not cover your code.
+* **Follow:** hover a participant and click the eye icon (or double-click them, or right-click >
+  *Follow*). Your editor then keeps showing their file and caret; "Following …" appears above the
+  list. Clicking or typing in an editor, *Stop following*, or that person leaving ends it.
+* **Participant list:** each guest's connection to the host shows as signal bars (hover for the
+  ping in ms). The host's ⋯ icon on a guest has *Make Editor*, *Make Viewer* and *Remove from
+  Session*.
+* **Status bar:** while in a session the IDE status bar shows the status (green connected, amber
+  connecting, red disconnected), the number of people, the session time and unread chat
+  messages; click it to open the tool window.
 * **Chat:** the **Chat** tab at the bottom of the tool window talks to everyone in the session,
   viewers included; press Enter to send. The host stamps who sent each message, keeps the last
   200 and shows them to anyone who joins later. Unread messages are counted on the tab, and a
@@ -111,7 +120,7 @@ OpenCollab mirror, so it can never overwrite your own data.
   the session time under the status.
 * **Files:** creating, renaming, moving and deleting shared files in the Project view is
   propagated. Guests' changes are validated by the host first.
-* **Roles** (host only, right-click a participant): *Make Editor*, *Make Viewer*, *Remove from
+* **Roles** (host only, ⋯ icon or right-click on a participant): *Make Editor*, *Make Viewer*, *Remove from
   Session*. Viewers' editors are read-only, and the host rejects any edit or file change from a
   viewer even if a modified client sends one.
 * **Leaving:** guests click **Leave**; the host clicks **End Session**, which disconnects

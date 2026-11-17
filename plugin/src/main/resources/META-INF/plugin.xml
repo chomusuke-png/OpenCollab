@@ -18,6 +18,7 @@
         <notificationGroup id="OpenCollab" displayType="BALLOON" key="notification.group.OpenCollab"/>
         <postStartupActivity implementation="dev.opencollab.plugin.session.PendingJoinActivity"/>
         <postStartupActivity implementation="dev.opencollab.plugin.updates.UpdateRepositoryActivity"/>
+        <statusBarWidgetFactory id="OpenCollab.SessionStatus" implementation="dev.opencollab.plugin.ui.SessionStatusWidgetFactory"/>
     </extensions>
 
     <!-- Texts come from action.<id>.text / action.<id>.description in the bundle. -->

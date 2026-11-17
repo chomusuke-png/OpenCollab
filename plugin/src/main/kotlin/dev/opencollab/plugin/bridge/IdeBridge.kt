@@ -14,6 +14,8 @@ import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.editor.event.EditorFactoryEvent
 import com.intellij.openapi.editor.event.EditorFactoryListener
+import com.intellij.openapi.editor.event.EditorMouseEvent
+import com.intellij.openapi.editor.event.EditorMouseListener
 import com.intellij.openapi.editor.event.SelectionEvent
 import com.intellij.openapi.editor.event.SelectionListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
@@ -67,6 +69,8 @@ interface BridgeListener {
     fun onLatencies(millis: Map<String, Int>) {}
     fun onChat(entry: ChatEntry) {}
     fun onChatHistory(entries: List<ChatEntry>) {}
+    /** Started following [participantId], or stopped (null). EDT. */
+    fun onFollowingChanged(participantId: String?) {}
 }
 
 /**
@@ -108,6 +112,7 @@ class IdeBridge(
         multicaster.addDocumentListener(documentListener, this)
         multicaster.addCaretListener(caretListener, this)
         multicaster.addSelectionListener(selectionListener, this)
+        multicaster.addEditorMouseListener(followMouseListener, this)
         EditorFactory.getInstance().addEditorFactoryListener(editorFactoryListener, this)
         val projectBus = project.messageBus.connect(this)
         projectBus.subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, fileEditorListener)
@@ -241,19 +246,58 @@ class IdeBridge(
     override fun onPresence(presence: Message.PresenceBroadcast) {
         val who = participants[presence.participantId]
         renderer.update(presence, who?.displayName ?: "?", who?.colorIndex ?: 0, ::documentOf)
+        if (presence.participantId == followingId) jumpTo(presence.participantId)
     }
 
-    override fun onParticipantLeft(participantId: String) = renderer.remove(participantId)
+    override fun onParticipantLeft(participantId: String) {
+        renderer.remove(participantId)
+        if (participantId == followingId) stopFollowing()
+    }
 
     fun presenceOf(participantId: String) = renderer.presenceOf(participantId)
 
-    /** Opens the file a participant is looking at, at their caret. EDT. */
-    fun follow(participantId: String): Boolean {
+    // ---- Following (EDT) ---------------------------------------------------------------
+
+    /** The participant whose file and caret this IDE keeps showing, if any. */
+    var followingId: String? = null
+        private set
+    /** Caret moves until then come from our own navigation, not from the user. */
+    private var ignoreCaretUntil = 0L
+
+    /**
+     * Keeps showing [participantId]'s file and caret until the user clicks or types in an
+     * editor, or stops. Returns false if they have no shared file open right now (following
+     * still starts and catches up once they open one).
+     */
+    fun startFollowing(participantId: String): Boolean {
+        if (followingId != participantId) {
+            followingId = participantId
+            listener.onFollowingChanged(participantId)
+        }
+        return jumpTo(participantId)
+    }
+
+    fun stopFollowing() {
+        if (followingId == null) return
+        followingId = null
+        listener.onFollowingChanged(null)
+    }
+
+    /** Opens the file a participant is looking at, at their caret, without taking focus. */
+    private fun jumpTo(participantId: String): Boolean {
         val p = renderer.presenceOf(participantId) ?: return false
         val path = p.path ?: return false
         val file = fileOf(path) ?: return false
-        OpenFileDescriptor(project, file, p.caret).navigate(true)
+        ignoreCaretUntil = System.currentTimeMillis() + 300
+        OpenFileDescriptor(project, file, p.caret).navigate(false)
         return true
+    }
+
+    /** A click in one of this project's editors means the user took over. */
+    private val followMouseListener = object : EditorMouseListener {
+        override fun mousePressed(event: EditorMouseEvent) {
+            if (event.editor.project == project) stopFollowing()
+        }
     }
 
     // ---- ClientHandler: files (client I/O thread) -------------------------------------
@@ -344,7 +388,13 @@ class IdeBridge(
     }
 
     private val caretListener = object : CaretListener {
-        override fun caretPositionChanged(event: CaretEvent) = sendPresence(event.editor)
+        override fun caretPositionChanged(event: CaretEvent) {
+            // Moving the caret yourself (typing, arrow keys) in a focused editor ends following.
+            if (followingId != null && applyingRemote.get() == 0 && System.currentTimeMillis() > ignoreCaretUntil &&
+                event.editor.contentComponent.hasFocus()
+            ) stopFollowing()
+            sendPresence(event.editor)
+        }
     }
 
     private val selectionListener = object : SelectionListener {

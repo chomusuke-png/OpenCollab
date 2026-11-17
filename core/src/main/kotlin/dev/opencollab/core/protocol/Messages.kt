@@ -8,8 +8,12 @@ import kotlinx.serialization.json.JsonElement
  * v2: streamed file transfer with chunk acknowledgements and content-less large file events.
  * v3: the host pings participants and broadcasts their round-trip times; Welcome carries the session age.
  * v4: session chat relayed and stamped by the host, with recent history for newcomers.
+ * v5: shared consoles (the host's run and build output) and guest requests to run on the host.
  */
-const val PROTOCOL_VERSION = 4
+const val PROTOCOL_VERSION = 5
+
+/** Stands for the host's project folder in shared console text; each guest puts its own folder back. */
+const val PROJECT_DIR_MACRO = "\$PROJECT_DIR\$"
 
 @Serializable
 enum class Role {
@@ -74,6 +78,16 @@ data class ChatEntry(
     /** Host wall-clock time (epoch milliseconds). */
     val sentAtMillis: Long,
 )
+
+@Serializable
+enum class ConsoleStream { STDOUT, STDERR, SYSTEM }
+
+/** Something guests may ask the host to run: a run configuration, or building the project. */
+@Serializable
+data class RunTarget(val id: String, val name: String, val kind: RunTargetKind)
+
+@Serializable
+enum class RunTargetKind { CONFIGURATION, BUILD }
 
 @Serializable
 data class DocHistoryEntry(val opId: String, val author: String, val revision: Int, val op: JsonElement)
@@ -260,4 +274,31 @@ sealed class Message {
     /** Host → a participant after (re)joining: the most recent messages, oldest first. Replaces any local copy. */
     @Serializable @SerialName("chatHistory")
     data class ChatHistory(val entries: List<ChatEntry>) : Message()
+
+    // ---- Shared consoles and running on the host ----------------------------------------
+    /**
+     * Host → guests: a process or build started on the host. [requestedBy] is the participant
+     * whose request started it, if any. Paths inside the project appear as [PROJECT_DIR_MACRO].
+     */
+    @Serializable @SerialName("consoleStarted")
+    data class ConsoleStarted(val consoleId: String, val title: String, val requestedBy: String? = null) : Message()
+
+    @Serializable @SerialName("consoleOutput")
+    data class ConsoleOutput(val consoleId: String, val stream: ConsoleStream, val text: String) : Message()
+
+    /** [exitCode] is null when unknown (e.g. a build that only reports success or failure). */
+    @Serializable @SerialName("consoleEnded")
+    data class ConsoleEnded(val consoleId: String, val exitCode: Int?) : Message()
+
+    /** Host → guests: what may be requested with [RunRequest]; replaces the previous list. */
+    @Serializable @SerialName("runTargets")
+    data class RunTargets(val targets: List<RunTarget>) : Message()
+
+    /** Editor → host: please run [targetId]. The host's user approves or refuses. */
+    @Serializable @SerialName("runRequest")
+    data class RunRequest(val requestId: String, val targetId: String) : Message()
+
+    /** Host → the requester only. */
+    @Serializable @SerialName("runResponse")
+    data class RunResponse(val requestId: String, val accepted: Boolean, val reason: String? = null) : Message()
 }

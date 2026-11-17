@@ -37,6 +37,10 @@ object MessageCodec {
     const val MAX_LATENCY_ENTRIES = 256
     const val MAX_CHAT_CHARS = 2_000
     const val MAX_CHAT_HISTORY = 500
+    const val MAX_TITLE = 200
+    const val MAX_RUN_TARGETS = 500
+    /** Console output travels in chunks of at most this many characters. */
+    const val MAX_CONSOLE_CHUNK_CHARS = 64 * 1024
 
     private val json = Json {
         classDiscriminator = "t"
@@ -152,6 +156,15 @@ object MessageCodec {
                 check(m.entries.size <= MAX_CHAT_HISTORY, "Chat history too long")
                 m.entries.forEach(::chatEntry)
             }
+            is Message.ConsoleStarted -> { id(m.consoleId); title(m.title); m.requestedBy?.let(::id) }
+            is Message.ConsoleOutput -> { id(m.consoleId); check(m.text.length <= MAX_CONSOLE_CHUNK_CHARS, "Console chunk too large") }
+            is Message.ConsoleEnded -> id(m.consoleId)
+            is Message.RunTargets -> {
+                check(m.targets.size <= MAX_RUN_TARGETS, "Too many run targets")
+                m.targets.forEach { id(it.id); title(it.name) }
+            }
+            is Message.RunRequest -> { id(m.requestId); id(m.targetId) }
+            is Message.RunResponse -> { id(m.requestId); m.reason?.let(::title) }
             else -> Unit
         }
     }
@@ -180,6 +193,10 @@ object MessageCodec {
         check(e.id >= 0 && e.sentAtMillis >= 0, "Invalid chat entry")
         chatText(e.text)
     }
+
+    /** Console titles, run target names and refusal reasons: one bounded line. */
+    private fun title(value: String) =
+        check(value.isNotBlank() && value.length <= MAX_TITLE && value.none { it.isISOControl() }, "Invalid title")
 
     private fun id(value: String) =
         check(value.isNotEmpty() && value.length <= MAX_ID && value.none { it.isISOControl() }, "Invalid identifier")

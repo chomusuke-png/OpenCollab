@@ -7,6 +7,7 @@ import dev.opencollab.core.ot.ClientDocument
 import dev.opencollab.core.ot.TextOperation
 import dev.opencollab.core.presence.PresenceThrottler
 import dev.opencollab.core.protocol.ChatEntry
+import dev.opencollab.core.protocol.RunTarget
 import dev.opencollab.core.protocol.FileEntry
 import dev.opencollab.core.protocol.FileMutation
 import dev.opencollab.core.protocol.FileOpKind
@@ -54,6 +55,13 @@ interface ClientHandler {
 
     /** Recent chat after (re)joining; replaces what was shown before (I/O thread). */
     fun onChatHistory(entries: List<ChatEntry>) {}
+
+    /** The host's shared consoles and run targets, and answers to [CollabClient.requestRun] (I/O thread). */
+    fun onConsoleStarted(started: Message.ConsoleStarted) {}
+    fun onConsoleOutput(output: Message.ConsoleOutput) {}
+    fun onConsoleEnded(ended: Message.ConsoleEnded) {}
+    fun onRunTargets(targets: List<RunTarget>) {}
+    fun onRunResponse(response: Message.RunResponse) {}
 
     /** Mirror files changed on disk (I/O thread). [initial] is true for the join snapshot. */
     fun onFilesChanged(paths: Collection<String>, initial: Boolean) {}
@@ -205,6 +213,17 @@ class CollabClient(
     fun setRole(participantId: String, role: Role) = send(Message.SetRole(participantId, role))
 
     /**
+     * Asks the host to run [targetId] (from [ClientHandler.onRunTargets]); the answer arrives
+     * through [ClientHandler.onRunResponse] with the returned request id. Null if not connected.
+     */
+    fun requestRun(targetId: String): String? {
+        if (!welcomed) return null
+        val id = "run-${requestCounter.incrementAndGet()}"
+        send(Message.RunRequest(id, targetId))
+        return id
+    }
+
+    /**
      * Sends a chat message; it shows up through [ClientHandler.onChat] once the host relays it.
      * Returns false (nothing sent) for blank or over-long text or while not connected.
      */
@@ -332,6 +351,11 @@ class CollabClient(
             is Message.Latencies -> handler.onLatencies(m.millis)
             is Message.Chat -> handler.onChat(m.entry)
             is Message.ChatHistory -> handler.onChatHistory(m.entries)
+            is Message.ConsoleStarted -> handler.onConsoleStarted(m)
+            is Message.ConsoleOutput -> handler.onConsoleOutput(m)
+            is Message.ConsoleEnded -> handler.onConsoleEnded(m)
+            is Message.RunTargets -> handler.onRunTargets(m.targets)
+            is Message.RunResponse -> handler.onRunResponse(m)
 
             is Message.Manifest -> onManifest(m)
             is Message.FileChunk -> onFileChunk(m)

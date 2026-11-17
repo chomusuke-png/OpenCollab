@@ -8,6 +8,8 @@ import dev.opencollab.core.files.toConfig
 import dev.opencollab.core.ot.ServerDocument
 import dev.opencollab.core.presence.RateLimiter
 import dev.opencollab.core.protocol.ChatEntry
+import dev.opencollab.core.protocol.ConsoleStream
+import dev.opencollab.core.protocol.RunTarget
 import dev.opencollab.core.protocol.DocHistoryEntry
 import dev.opencollab.core.protocol.FileMutation
 import dev.opencollab.core.protocol.FileOpKind
@@ -35,6 +37,24 @@ fun interface DocumentSource {
 interface HostSessionListener {
     fun onParticipantsChanged(participants: List<ParticipantInfo>) {}
     fun onLog(message: String) {}
+
+    /**
+     * An editor asks to run [RunRequestInfo.target] on this machine (session thread). Answer
+     * with [HostSession.answerRun]; nothing runs without that.
+     */
+    fun onRunRequest(request: RunRequestInfo) {}
+}
+
+data class RunRequestInfo(val requestId: String, val participantId: String, val displayName: String, val target: RunTarget)
+
+/** Reason codes in [Message.RunResponse]; guests show them in their own language. */
+object RunRefusal {
+    const val REFUSED = "refused"
+    const val VIEWER = "viewer"
+    const val UNKNOWN_TARGET = "unknown-target"
+    const val TOO_MANY = "too-many"
+    const val NO_ANSWER = "no-answer"
+    const val HOST = "host"
 }
 
 data class HostConfig(
@@ -57,6 +77,13 @@ data class HostConfig(
     val chatPerSecond: Int = 5,
     /** Recent chat messages kept for participants who join or reconnect later. */
     val chatHistorySize: Int = 200,
+    /** Run requests per participant per second (bursts beyond are refused). */
+    val runRequestsPerSecond: Int = 1,
+    /** A run request the host has not answered by then is refused. */
+    val runRequestTimeoutMillis: Long = 120_000,
+    /** Most recent consoles, and characters of each, replayed to participants who join later. */
+    val consoleReplayCount: Int = 5,
+    val consoleReplayChars: Int = 256 * 1024,
 )
 
 fun randomToken(bytes: Int = 24): String {
@@ -93,6 +120,7 @@ class HostSession(
         val presenceLimiter = RateLimiter(config.presencePerSecond, scheduler)
         val messageLimiter = RateLimiter(config.messagesPerSecond, scheduler)
         val chatLimiter = RateLimiter(config.chatPerSecond, scheduler)
+        val runLimiter = RateLimiter(config.runRequestsPerSecond, scheduler)
         var handshakeTimer: Cancellable? = null
         var open = true
         /** Latest position held back by the presence limit, and the timer that relays it. */
@@ -121,6 +149,18 @@ class HostSession(
     private var nextPingNonce = 1L
     private val chatLog = ArrayDeque<ChatEntry>()
     private var nextChatId = 1L
+    private var runTargets: List<RunTarget> = emptyList()
+    private inner class PendingRun(val peer: Peer, val expiry: Cancellable)
+    /** Unanswered run requests by "participantId/requestId". */
+    private val pendingRuns = HashMap<String, PendingRun>()
+    private class ConsoleLog(val started: Message.ConsoleStarted) {
+        val chunks = ArrayDeque<Message.ConsoleOutput>()
+        var chars = 0
+        var truncated = false
+        var ended: Message.ConsoleEnded? = null
+    }
+    /** The latest consoles, oldest first, for participants who join later. */
+    private val consoles = LinkedHashMap<String, ConsoleLog>()
     private var closed = false
     private val startedAt = scheduler.nowMillis()
 
@@ -272,6 +312,7 @@ class HostSession(
             ),
         )
         if (chatLog.isNotEmpty()) peer.send(Message.ChatHistory(chatLog.toList()))
+        if (info.role != Role.HOST) replayConsoles(peer)
         broadcast(Message.ParticipantJoined(info), except = peer)
         peers.values.forEach { other -> if (other !== peer) other.presence?.let(peer::send) }
         listener.onLog("${info.displayName} joined as ${info.role}${if (resumed != null) " (resumed)" else ""}")
@@ -317,6 +358,7 @@ class HostSession(
             }
             is Message.Presence -> presence(peer, m)
             is Message.ChatSend -> chat(peer, m)
+            is Message.RunRequest -> runRequest(peer, m)
             else -> peer.send(Message.Error("protocol", "Unexpected message ${m::class.simpleName}"))
         }
     }
@@ -633,6 +675,96 @@ class HostSession(
         broadcast(Message.Chat(entry))
     }
 
+    // ---- Shared consoles (host IDE → guests) --------------------------------------------
+
+    /** What guests may ask to run; replaces the previous list. Thread-safe. */
+    fun setRunTargets(targets: List<RunTarget>) = exec.execute {
+        runTargets = targets.take(MessageCodec.MAX_RUN_TARGETS)
+        broadcastToGuests(Message.RunTargets(runTargets))
+    }
+
+    /** A process or build started in the host IDE. Thread-safe. */
+    fun consoleStarted(consoleId: String, title: String, requestedBy: String? = null) = exec.execute {
+        val started = Message.ConsoleStarted(consoleId, title.take(MessageCodec.MAX_TITLE).ifBlank { "?" }, requestedBy)
+        consoles[consoleId] = ConsoleLog(started)
+        while (consoles.size > config.consoleReplayCount) consoles.remove(consoles.keys.first())
+        broadcastToGuests(started)
+    }
+
+    /** Output of a console; long text is split into protocol-sized chunks. Thread-safe. */
+    fun consoleOutput(consoleId: String, stream: ConsoleStream, text: String) = exec.execute {
+        val log = consoles[consoleId] ?: return@execute
+        for (part in text.chunked(MessageCodec.MAX_CONSOLE_CHUNK_CHARS)) {
+            val chunk = Message.ConsoleOutput(consoleId, stream, part)
+            log.chunks.addLast(chunk)
+            log.chars += part.length
+            while (log.chars > config.consoleReplayChars && log.chunks.size > 1) {
+                log.chars -= log.chunks.removeFirst().text.length
+                log.truncated = true
+            }
+            broadcastToGuests(chunk)
+        }
+    }
+
+    fun consoleEnded(consoleId: String, exitCode: Int?) = exec.execute {
+        val log = consoles[consoleId] ?: return@execute
+        val ended = Message.ConsoleEnded(consoleId, exitCode)
+        log.ended = ended
+        broadcastToGuests(ended)
+    }
+
+    private fun replayConsoles(peer: Peer) {
+        if (runTargets.isNotEmpty()) peer.send(Message.RunTargets(runTargets))
+        for (log in consoles.values) {
+            peer.send(log.started)
+            if (log.truncated) peer.send(Message.ConsoleOutput(log.started.consoleId, ConsoleStream.SYSTEM, "[…]\n"))
+            log.chunks.forEach(peer::send)
+            log.ended?.let(peer::send)
+        }
+    }
+
+    /** The host's own IDE shows its consoles natively; only guests get the copies. */
+    private fun broadcastToGuests(m: Message) {
+        val text = MessageCodec.encode(m)
+        for (peer in peers.values) {
+            if (peer.info == null || !peer.open || peer.role == Role.HOST) continue
+            peer.connection.send(text)
+        }
+    }
+
+    // ---- Run requests (guest → host) -------------------------------------------------
+
+    private fun runRequest(peer: Peer, m: Message.RunRequest) {
+        val info = peer.info ?: return
+        fun refuse(reason: String) = peer.send(Message.RunResponse(m.requestId, false, reason))
+        when {
+            info.role == Role.HOST -> return refuse(RunRefusal.HOST)
+            !info.role.canEdit -> return refuse(RunRefusal.VIEWER)
+            !peer.runLimiter.tryAcquire() -> return refuse(RunRefusal.TOO_MANY)
+        }
+        val target = runTargets.firstOrNull { it.id == m.targetId } ?: return refuse(RunRefusal.UNKNOWN_TARGET)
+        val key = "${info.id}/${m.requestId}"
+        if (key in pendingRuns) return
+        val expiry = scheduler.schedule(config.runRequestTimeoutMillis) {
+            exec.execute { if (pendingRuns.remove(key) != null) refuse(RunRefusal.NO_ANSWER) }
+        }
+        pendingRuns[key] = PendingRun(peer, expiry)
+        listener.onRunRequest(RunRequestInfo(m.requestId, info.id, info.displayName, target))
+    }
+
+    /**
+     * The host's answer to a run request. Returns true only if the request was still waiting
+     * (not expired, requester still connected): run the target only then. Blocks briefly.
+     */
+    fun answerRun(participantId: String, requestId: String, accepted: Boolean): Boolean = query {
+        val pending = pendingRuns.remove("$participantId/$requestId") ?: return@query false
+        pending.expiry.cancel()
+        val peer = pending.peer
+        if (!peer.open) return@query false
+        peer.send(Message.RunResponse(requestId, accepted, if (accepted) null else RunRefusal.REFUSED))
+        true
+    }
+
     // ---- Latency -----------------------------------------------------------------------
 
     private fun schedulePingRound() {
@@ -676,6 +808,8 @@ class HostSession(
         peer.handshakeTimer?.cancel()
         peer.presenceFlush?.cancel()
         peer.transfers.values.forEach { it.cancel() }
+        // Their unanswered run requests can no longer be granted.
+        pendingRuns.values.removeIf { pending -> (pending.peer === peer).also { if (it) pending.expiry.cancel() } }
         peers.remove(peer.connection)
         peer.connection.close(reason)
         val info = peer.info ?: return

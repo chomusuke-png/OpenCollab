@@ -6,6 +6,7 @@ import dev.opencollab.core.files.SharingRules
 import dev.opencollab.core.ot.TextOperation
 import dev.opencollab.core.protocol.ChatEntry
 import dev.opencollab.core.protocol.FileMutation
+import dev.opencollab.core.protocol.RunTarget
 import dev.opencollab.core.protocol.Message
 import dev.opencollab.core.transport.Connector
 import dev.opencollab.core.transport.InMemoryTransport
@@ -38,6 +39,17 @@ class FakeIde(name: String) : ClientHandler {
     val chat = CopyOnWriteArrayList<ChatEntry>()
     override fun onChat(entry: ChatEntry) { chat += entry }
     override fun onChatHistory(entries: List<ChatEntry>) { chat.clear(); chat.addAll(entries) }
+    /** Shared console text and exit codes by console id, run targets, answers to run requests. */
+    val consoles = ConcurrentHashMap<String, StringBuffer>()
+    val consoleTitles = ConcurrentHashMap<String, String>()
+    val consoleExits = ConcurrentHashMap<String, Int>()
+    @Volatile var runTargets: List<RunTarget> = emptyList()
+    val runResponses = CopyOnWriteArrayList<Message.RunResponse>()
+    override fun onConsoleStarted(started: Message.ConsoleStarted) { consoleTitles[started.consoleId] = started.title; consoles[started.consoleId] = StringBuffer() }
+    override fun onConsoleOutput(output: Message.ConsoleOutput) { consoles[output.consoleId]?.append(output.text) }
+    override fun onConsoleEnded(ended: Message.ConsoleEnded) { consoleExits[ended.consoleId] = ended.exitCode ?: -1 }
+    override fun onRunTargets(targets: List<RunTarget>) { runTargets = targets }
+    override fun onRunResponse(response: Message.RunResponse) { runResponses += response }
 
     override fun onStateChanged(state: ClientState, detail: String) { states += state; stateDetails += detail }
     override fun applyRemoteEdit(path: String, op: TextOperation) { texts[path] = op.apply(texts.getValue(path)) }
@@ -77,6 +89,8 @@ class Harness(val hostRoot: Path, rules: SharingRules = SharingRules(), config: 
     val hostIde = FakeIde("host")
     val files = ProjectFiles(hostRoot, rules)
     val links = CopyOnWriteArrayList<InMemoryTransport.MemoryConnection>()
+    /** Run requests the host IDE was asked to approve. */
+    val runRequests = CopyOnWriteArrayList<RunRequestInfo>()
     private val clients = CopyOnWriteArrayList<CollabClient>()
 
     /** Host documents: unsaved editor text wins over disk; pre-registered with the host bridge. */
@@ -96,6 +110,9 @@ class Harness(val hostRoot: Path, rules: SharingRules = SharingRules(), config: 
             f.get(10, TimeUnit.SECONDS)
         },
         scheduler,
+        object : HostSessionListener {
+            override fun onRunRequest(request: RunRequestInfo) { runRequests += request }
+        },
     )
 
     init {

@@ -1,7 +1,10 @@
 package dev.opencollab.core.session
 
 import dev.opencollab.core.files.Hashes
+import dev.opencollab.core.protocol.ConsoleStream
 import dev.opencollab.core.protocol.FileMutation
+import dev.opencollab.core.protocol.RunTarget
+import dev.opencollab.core.protocol.RunTargetKind
 import dev.opencollab.core.protocol.FileOpKind
 import dev.opencollab.core.protocol.Message
 import dev.opencollab.core.protocol.MessageCodec
@@ -96,6 +99,76 @@ class HostSessionTest {
             eventually { h.hostIde.presence[id]?.caret == 499 }
             Thread.sleep(200)
             assertEquals(499, h.hostIde.presence[id]?.caret, "nothing older may arrive after the final position")
+        }
+    }
+
+    @Test
+    fun `host consoles reach guests only and are replayed to latecomers`() {
+        sampleProject()
+        Harness(host).use { h ->
+            val alice = h.guest("alice", guestDir("alice"))
+            awaitState(alice, ClientState.CONNECTED)
+            h.session.consoleStarted("c1", "gradle build")
+            h.session.consoleOutput("c1", ConsoleStream.STDOUT, "Compiling \$PROJECT_DIR\$/src/Main.kt\n")
+            h.session.consoleOutput("c1", ConsoleStream.STDERR, "x".repeat(MessageCodec.MAX_CONSOLE_CHUNK_CHARS + 10))
+            h.session.consoleEnded("c1", 1)
+            eventually { alice.consoleExits["c1"] == 1 }
+            assertEquals("gradle build", alice.consoleTitles["c1"])
+            assertEquals("Compiling \$PROJECT_DIR\$/src/Main.kt\n" + "x".repeat(MessageCodec.MAX_CONSOLE_CHUNK_CHARS + 10), alice.consoles["c1"].toString())
+            assertTrue(h.hostIde.consoles.isEmpty(), "the host sees its own consoles natively")
+
+            val bob = h.guest("bob", guestDir("bob"))
+            awaitState(bob, ClientState.CONNECTED)
+            eventually { bob.consoleExits["c1"] == 1 }
+            assertEquals(alice.consoles["c1"].toString(), bob.consoles["c1"].toString())
+        }
+    }
+
+    @Test
+    fun `only editors may ask to run, only known targets, and only the host's answer runs it`() {
+        sampleProject()
+        Harness(host).use { h ->
+            val alice = h.guest("alice", guestDir("alice"))
+            val viewer = h.guest("vic", guestDir("vic"), token = h.session.config.viewerToken)
+            awaitState(alice, ClientState.CONNECTED)
+            awaitState(viewer, ClientState.CONNECTED)
+            h.session.setRunTargets(listOf(RunTarget("build", "Build Project", RunTargetKind.BUILD)))
+            eventually { alice.runTargets.size == 1 && viewer.runTargets.size == 1 }
+
+            val denied = viewer.client.requestRun("build")!!
+            eventually { viewer.runResponses.any { it.requestId == denied } }
+            assertEquals(RunRefusal.VIEWER, viewer.runResponses.single().reason)
+
+            val unknown = alice.client.requestRun("rm-rf")!!
+            eventually { alice.runResponses.any { it.requestId == unknown } }
+            assertEquals(RunRefusal.UNKNOWN_TARGET, alice.runResponses.single { it.requestId == unknown }.reason)
+            Thread.sleep(1_100) // the rate limit allows one request per second
+
+            val asked = alice.client.requestRun("build")!!
+            eventually { h.runRequests.size == 1 }
+            val request = h.runRequests.single()
+            assertEquals("alice", request.displayName)
+            assertEquals("Build Project", request.target.name)
+            assertTrue(h.session.answerRun(request.participantId, request.requestId, accepted = true))
+            assertFalse(h.session.answerRun(request.participantId, request.requestId, accepted = true), "answered only once")
+            eventually { alice.runResponses.any { it.requestId == asked } }
+            assertTrue(alice.runResponses.single { it.requestId == asked }.accepted)
+        }
+    }
+
+    @Test
+    fun `unanswered run requests expire and can no longer be granted`() {
+        sampleProject()
+        Harness(host, config = HostConfig("demo", runRequestTimeoutMillis = 200)).use { h ->
+            val alice = h.guest("alice", guestDir("alice"))
+            awaitState(alice, ClientState.CONNECTED)
+            h.session.setRunTargets(listOf(RunTarget("build", "Build Project", RunTargetKind.BUILD)))
+            eventually { alice.runTargets.isNotEmpty() }
+            val asked = alice.client.requestRun("build")!!
+            eventually { alice.runResponses.any { it.requestId == asked } }
+            assertEquals(RunRefusal.NO_ANSWER, alice.runResponses.single().reason)
+            val request = h.runRequests.single()
+            assertFalse(h.session.answerRun(request.participantId, request.requestId, accepted = true))
         }
     }
 

@@ -146,6 +146,20 @@ class ProtocolAndRulesTest {
     }
 
     @Test
+    fun `the host project folder is hidden in console text and each guest gets its own back`() {
+        val hostDir = tmp.resolve("tests")
+        val sep = java.io.File.separator
+        val text = "error: $hostDir${sep}src${sep}Main.kt:12:5: boom\nunrelated: ${hostDir}2${sep}x.kt\n"
+        val hidden = dev.opencollab.core.files.ProjectDirMacro(hostDir).hide(text)
+        assertEquals("error: \$PROJECT_DIR\$/src/Main.kt:12:5: boom\nunrelated: ${hostDir}2${sep}x.kt\n", hidden)
+
+        val mirror = tmp.resolve("mirror")
+        val shown = dev.opencollab.core.files.ProjectDirMacro(mirror).reveal(hidden)
+        val mirrorPath = mirror.toAbsolutePath().normalize().toString().replace('\\', '/')
+        assertTrue(shown.startsWith("error: $mirrorPath/src/Main.kt:12:5: boom\n"), shown)
+    }
+
+    @Test
     fun `presence throttler sends first update immediately and latest on trailing edge`() {
         val clock = FakeScheduler()
         val sent = mutableListOf<Int>()

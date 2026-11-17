@@ -23,6 +23,7 @@ import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.dsl.builder.AlignX
@@ -93,6 +94,8 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         isEditable = false
         lineWrap = PropertiesComponent.getInstance().getBoolean(WRAP_KEY, false)
     }
+    private val bottomTabs = JBTabbedPane()
+    private val chatPanel = ChatPanel(service)
 
     init {
         border = JBUI.Borders.empty(6)
@@ -118,8 +121,15 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         })
         val splitter = JBSplitter(true, 0.55f).apply {
             firstComponent = titled(message("panel.participants.title"), JBScrollPane(list))
-            secondComponent = titled(message("panel.activity.title"), JBScrollPane(logArea), activityToolbar())
+            secondComponent = bottomTabs
         }
+        val activity = JPanel(BorderLayout()).apply {
+            add(JPanel(BorderLayout()).apply { add(activityToolbar(), BorderLayout.EAST) }, BorderLayout.NORTH)
+            add(JBScrollPane(logArea), BorderLayout.CENTER)
+        }
+        bottomTabs.addTab(message("panel.chat.title"), chatPanel)
+        bottomTabs.addTab(message("panel.activity.title"), activity)
+        bottomTabs.addChangeListener { chatPanel.selected = bottomTabs.selectedComponent === chatPanel }
         add(splitter, BorderLayout.CENTER)
 
         hostButton.addActionListener { service.startHosting() }
@@ -228,6 +238,9 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         service.participants.forEach(model::addElement)
         selectedId?.let { id -> (0 until model.size()).firstOrNull { model[it].id == id }?.let(list::setSelectedIndex) }
         updateSessionTime()
+        val unread = service.unreadChat
+        bottomTabs.setTitleAt(0, if (unread > 0) message("panel.chat.unread", unread) else message("panel.chat.title"))
+        chatPanel.refresh(inSession = mode is CollabSessionService.Mode.Hosting || mode is CollabSessionService.Mode.Joined)
         // Ping updates refresh the panel every 2 s; leave the log (and where it is scrolled) alone unless it changed.
         val log = service.log().joinToString("\n")
         if (logArea.text != log) {

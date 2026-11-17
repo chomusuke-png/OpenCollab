@@ -16,6 +16,9 @@ import dev.opencollab.core.files.FileAccessDenied
 import dev.opencollab.core.files.MirrorWorkspace
 import dev.opencollab.core.files.ProjectFiles
 import dev.opencollab.core.files.SafePath
+import com.intellij.openapi.util.text.StringUtil
+import com.intellij.openapi.wm.ToolWindowManager
+import dev.opencollab.core.protocol.ChatEntry
 import dev.opencollab.core.protocol.FileMutation
 import dev.opencollab.core.protocol.ParticipantInfo
 import dev.opencollab.core.protocol.Role
@@ -75,6 +78,8 @@ class CollabSessionService(private val project: Project) : Disposable {
     private val log = logger<CollabSessionService>()
     private val listeners = CopyOnWriteArrayList<Listener>()
     private val logLines = CopyOnWriteArrayList<String>()
+    /** Chat of the current (or last) session, oldest first; kept after leaving so it can still be read. */
+    private val chatEntries = CopyOnWriteArrayList<ChatEntry>()
     private var scheduler: SystemScheduler? = null
 
     @Volatile var mode: Mode = Mode.Idle
@@ -91,6 +96,19 @@ class CollabSessionService(private val project: Project) : Disposable {
     /** Round-trip time to the host per participant id, in ms. */
     @Volatile var latencies: Map<String, Int> = emptyMap()
         private set
+    /** Messages from others that arrived while the chat was not on screen. */
+    @Volatile var unreadChat: Int = 0
+        private set
+    /** Set by the chat panel: true while the chat is actually visible; reading it clears the unread count. */
+    @Volatile var chatOnScreen: Boolean = false
+        set(value) {
+            field = value
+            if (value && unreadChat != 0) {
+                unreadChat = 0
+                fire()
+            }
+        }
+
 
     fun addListener(l: Listener, parent: Disposable) {
         listeners += l
@@ -102,6 +120,26 @@ class CollabSessionService(private val project: Project) : Disposable {
     fun clearLog() {
         logLines.clear()
         fire()
+    }
+
+    fun chat(): List<ChatEntry> = chatEntries.toList()
+
+    /** Sends a chat message to the session; false if it could not be sent (not connected, empty, too long). */
+    fun sendChat(text: String): Boolean = when (val m = mode) {
+        is Mode.Hosting -> m.bridge.client.sendChat(text)
+        is Mode.Joined -> m.client.sendChat(text)
+        else -> false
+    }
+
+    /** Pops up someone else's message when the OpenCollab tool window is hidden. EDT. */
+    private fun notifyChat(entry: ChatEntry) {
+        if (project.isDisposed || entry.participantId == ownParticipantId()) return
+        if (ToolWindowManager.getInstance(project).getToolWindow("OpenCollab")?.isVisible == true) return
+        // Notification content is HTML: escape what other participants typed.
+        val text = StringUtil.escapeXmlEntities(StringUtil.shortenTextWithEllipsis(entry.text, 200, 0))
+        NotificationGroupManager.getInstance().getNotificationGroup("OpenCollab")
+            .createNotification(StringUtil.escapeXmlEntities(entry.displayName), text, NotificationType.INFORMATION)
+            .notify(project)
     }
 
     private fun fire() = ApplicationManager.getApplication().invokeLater({ listeners.forEach { it.changed() } }, ModalityState.any())
@@ -159,6 +197,20 @@ class CollabSessionService(private val project: Project) : Disposable {
             latencies = millis
             fire()
         }
+        override fun onChat(entry: ChatEntry) {
+            if (mode == Mode.Idle) return
+            chatEntries += entry
+            while (chatEntries.size > MAX_CHAT_KEPT) chatEntries.removeAt(0)
+            if (!chatOnScreen && entry.participantId != ownParticipantId()) unreadChat++
+            ApplicationManager.getApplication().invokeLater({ notifyChat(entry) }, ModalityState.any())
+            fire()
+        }
+        override fun onChatHistory(entries: List<ChatEntry>) {
+            if (mode == Mode.Idle) return
+            chatEntries.clear()
+            chatEntries.addAll(entries)
+            fire()
+        }
         override fun onParticipantsChanged(participants: List<ParticipantInfo>) {
             if (mode is Mode.Joined) { this@CollabSessionService.participants = participants; fire() }
         }
@@ -175,6 +227,8 @@ class CollabSessionService(private val project: Project) : Disposable {
     fun startHosting() {
         if (mode != Mode.Idle) return
         mode = Mode.Starting
+        chatEntries.clear()
+        unreadChat = 0
         status = message("status.starting")
         fire()
         ApplicationManager.getApplication().executeOnPooledThread {
@@ -361,6 +415,8 @@ class CollabSessionService(private val project: Project) : Disposable {
         )
         bridge.client = client
         bridge.install()
+        chatEntries.clear()
+        unreadChat = 0
         mode = Mode.Joined(client, bridge, invite.project)
         myRole = invite.role
         status = message("status.connecting", invite.project)
@@ -467,6 +523,8 @@ class CollabSessionService(private val project: Project) : Disposable {
     }
 
     companion object {
+        private const val MAX_CHAT_KEPT = 500
+
         fun getInstance(project: Project): CollabSessionService = project.getService(CollabSessionService::class.java)
     }
 }

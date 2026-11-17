@@ -38,6 +38,7 @@ import com.intellij.openapi.vfs.newvfs.events.VFileMoveEvent
 import com.intellij.openapi.vfs.newvfs.events.VFilePropertyChangeEvent
 import dev.opencollab.core.files.SafePath
 import dev.opencollab.core.ot.TextOperation
+import dev.opencollab.core.protocol.ChatEntry
 import dev.opencollab.core.protocol.FileMutation
 import dev.opencollab.core.protocol.FileOpKind
 import dev.opencollab.core.protocol.Message
@@ -64,6 +65,8 @@ interface BridgeListener {
     /** The session has been running for [sessionAgeMillis] (sent by the host on every (re)connect). */
     fun onSessionAge(sessionAgeMillis: Long) {}
     fun onLatencies(millis: Map<String, Int>) {}
+    fun onChat(entry: ChatEntry) {}
+    fun onChatHistory(entries: List<ChatEntry>) {}
 }
 
 /**
@@ -178,6 +181,8 @@ class IdeBridge(
     }
 
     override fun onLatencies(millis: Map<String, Int>) = listener.onLatencies(millis)
+    override fun onChat(entry: ChatEntry) = listener.onChat(entry)
+    override fun onChatHistory(entries: List<ChatEntry>) = listener.onChatHistory(entries)
 
     override fun onParticipantsChanged(participants: List<ParticipantInfo>) {
         this.participants.clear()

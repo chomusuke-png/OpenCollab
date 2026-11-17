@@ -103,6 +103,12 @@ OpenCollab mirror, so it can never overwrite your own data.
   selections as a translucent highlight.
 * **Follow:** double-click a participant in the tool window (or right-click > *Follow*) to open
   the file they are looking at, at their caret.
+* **Chat:** the **Chat** tab at the bottom of the tool window talks to everyone in the session,
+  viewers included; press Enter to send. The host stamps who sent each message, keeps the last
+  200 and shows them to anyone who joins later. Unread messages are counted on the tab, and a
+  notification pops up while the tool window is hidden. The **Activity** tab next to it has the
+  session log. Participants' round-trip time to the host (ms) is shown next to their role, and
+  the session time under the status.
 * **Files:** creating, renaming, moving and deleting shared files in the Project view is
   propagated. Guests' changes are validated by the host first.
 * **Roles** (host only, right-click a participant): *Make Editor*, *Make Viewer*, *Remove from
@@ -112,6 +118,8 @@ OpenCollab mirror, so it can never overwrite your own data.
   everybody. Closing the project also ends its session.
 * **Network interruptions:** guests reconnect automatically (with backoff) and recover their
   documents from the host's operation history; edits typed while offline are kept and merged.
+  If the host ends the session, removes the guest, or stays unreachable for about two minutes,
+  the guest leaves on its own; the status line says why.
 
 ## Sharing rules
 

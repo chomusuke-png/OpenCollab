@@ -121,7 +121,7 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
                 }
             }
             group(message("settings.group.presence")) {
-                row(message("settings.presence.interval")) { intTextField(20..1000).bindIntText(s::presenceIntervalMs) }
+                row(message("settings.presence.interval")) { intTextField(16..1000).bindIntText(s::presenceIntervalMs) }
             }
         }
     }

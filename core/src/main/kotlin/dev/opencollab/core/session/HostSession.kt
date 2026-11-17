@@ -48,7 +48,8 @@ data class HostConfig(
     val handshakeTimeoutMillis: Long = 15_000,
     val maxHistoryPerDocument: Int = 2_000,
     val fileEventLogSize: Int = 5_000,
-    val presencePerSecond: Int = 40,
+    /** Above the fastest presence interval a client may use (16 ms ≈ 62/s), so no final caret position is dropped. */
+    val presencePerSecond: Int = 120,
     val messagesPerSecond: Int = 2_000,
     /** How often the host pings participants and broadcasts their round-trip times; 0 disables. */
     val pingIntervalMillis: Long = 2_000,

@@ -83,9 +83,9 @@ end-to-end test.
 
 ## Presence
 
-Carets and selections are sent at most every 75 ms per participant (first update immediately,
+Carets and selections are sent at most every 16 ms per participant by default (first update immediately,
 latest value on the trailing edge — `PresenceThrottler`). The host rate-limits presence per
-participant (40/s), stamps the sender id (no spoofing), relays it to everybody else, sends current
+participant (120/s), stamps the sender id (no spoofing), relays it to everybody else, sends current
 presence to newcomers and broadcasts `participantLeft` on disconnect, which clears the carets.
 
 ## Reconnect

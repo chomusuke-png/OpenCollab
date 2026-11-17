@@ -22,6 +22,7 @@ import dev.opencollab.core.files.ProjectDirMacro
 import dev.opencollab.core.protocol.ChatEntry
 import dev.opencollab.core.protocol.ConsoleKind
 import dev.opencollab.core.protocol.ConsoleStream
+import dev.opencollab.core.protocol.Features
 import dev.opencollab.core.protocol.Message
 import dev.opencollab.core.protocol.RunTarget
 import dev.opencollab.core.session.RunRefusal
@@ -76,6 +77,8 @@ class CollabSessionService(private val project: Project) : Disposable {
             val endpoints: List<String>,
             val fingerprint: String,
             val consoles: HostConsoleSharing,
+            /** The debugger, breakpoints, VCS status and code style shown to guests; null when not shared. */
+            val ide: HostIdeSharing?,
         ) : Mode
         class Joined(val client: CollabClient, val bridge: IdeBridge, val project: String) : Mode
     }
@@ -102,6 +105,8 @@ class CollabSessionService(private val project: Project) : Disposable {
     interface ConsoleListener {
         fun started(console: SharedConsole) {}
         fun output(console: SharedConsole, stream: ConsoleStream, text: String) {}
+        /** Test events of a test run (IntelliJ test service messages). */
+        fun tests(console: SharedConsole, text: String) {}
         fun ended(console: SharedConsole) {}
         fun removed(console: SharedConsole) {}
     }
@@ -110,6 +115,9 @@ class CollabSessionService(private val project: Project) : Disposable {
     private val consoleListeners = CopyOnWriteArrayList<ConsoleListener>()
     @Volatile private var projectDir: ProjectDirMacro? = null
     private var guestRuns: GuestRunMirror? = null
+    /** Guest: the host's debugger, breakpoints, VCS status and code style. */
+    @Volatile var hostIde: GuestIdeMirror? = null
+        private set
     /** What the host lets guests ask to run (empty while hosting or idle). */
     @Volatile var runTargets: List<RunTarget> = emptyList()
         private set
@@ -141,6 +149,27 @@ class CollabSessionService(private val project: Project) : Disposable {
         appendLog(message("console.request.sent", target.name))
         return true
     }
+
+    /** Guest: whether the host accepts command requests from us (an editor, host supports it). */
+    val canRequestCommands: Boolean
+        get() = (mode as? Mode.Joined)?.client?.let { Features.COMMANDS in it.sharedFeatures && it.role.canEdit } ?: false
+
+    /** Guest: asks the host to run [command] in a shell in its project folder; the host's user decides. */
+    fun requestCommand(command: String): Boolean {
+        val joined = mode as? Mode.Joined ?: return false
+        val id = joined.client.requestCommand(command) ?: return false
+        runRequests[id] = command.trim()
+        appendLog(message("console.request.sent", command.trim()))
+        return true
+    }
+
+    /** Guest: asks the host to add or remove a line breakpoint. */
+    fun requestBreakpoint(path: String, line: Int, add: Boolean): Boolean =
+        (mode as? Mode.Joined)?.client?.requestBreakpoint(path, line, add) ?: false
+
+    /** Lets helpers refresh the panel and write to the activity log. */
+    internal fun changed() = fire()
+    internal fun logLine(line: String) = appendLog(line)
 
     /** Chat of the current (or last) session, oldest first; kept after leaving so it can still be read. */
     private val chatEntries = CopyOnWriteArrayList<ChatEntry>()
@@ -321,6 +350,16 @@ class CollabSessionService(private val project: Project) : Disposable {
             console.finished = true
             onConsoleEdt { it.ended(console) }
         }
+        override fun onHostIdeState(message: Message) {
+            if (mode !is Mode.Joined) return
+            if (message is Message.ConsoleTests) {
+                val console = synchronized(consoles) { consoles[message.consoleId] } ?: return
+                val text = projectDir?.reveal(message.text) ?: message.text
+                onConsoleEdt { it.tests(console, text) }
+            } else {
+                hostIde?.onState(message)
+            }
+        }
         override fun onRunTargets(targets: List<RunTarget>) {
             if (mode !is Mode.Joined) return
             runTargets = targets
@@ -390,7 +429,12 @@ class CollabSessionService(private val project: Project) : Disposable {
         val rules = settings.sharingRules()
         val sched = SystemScheduler("opencollab-host-timer").also { scheduler = it }
         val identity = TlsIdentity.ephemeral()
-        val config = HostConfig(projectName = project.name)
+        val features = buildSet {
+            if (s.shareConsoles) add(Features.TESTS)
+            if (s.shareIdeState) addAll(listOf(Features.DEBUG, Features.VCS, Features.CODE_STYLE))
+            if (s.allowCommandRequests) add(Features.COMMANDS)
+        }
+        val config = HostConfig(projectName = project.name, features = features)
         val bridge = IdeBridge(project, root, isHost = true, listener = bridgeListener())
 
         val files = object : ProjectFiles(root, rules, bridge.writer) {
@@ -407,6 +451,7 @@ class CollabSessionService(private val project: Project) : Disposable {
         }
         val documentSource = DocumentSource { path -> loadHostDocument(bridge, root, path) }
         var consoleSharing: HostConsoleSharing? = null
+        var ideSharing: HostIdeSharing? = null
         val session = HostSession(config, files, documentSource, sched, object : HostSessionListener {
             override fun onParticipantsChanged(participants: List<ParticipantInfo>) {
                 this@CollabSessionService.participants = participants
@@ -415,6 +460,10 @@ class CollabSessionService(private val project: Project) : Disposable {
             override fun onLog(message: String) = appendLog(message)
             override fun onRunRequest(request: RunRequestInfo) {
                 consoleSharing?.onRunRequest(request)
+            }
+            override fun onBreakpointRequest(participantId: String, path: String, line: Int, add: Boolean) {
+                val who = participants.firstOrNull { it.id == participantId }?.displayName ?: "?"
+                ideSharing?.onBreakpointRequest(who, path, line, add)
             }
         })
 
@@ -486,10 +535,12 @@ class CollabSessionService(private val project: Project) : Disposable {
             endpoints = endpoints + listOfNotNull(room?.let { "relay $relayUrl (room ${it.take(6)}…)" }),
             fingerprint = identity.fingerprint,
             consoles = HostConsoleSharing(project, root, session, s.shareConsoles) { appendLog(it) }.also { consoleSharing = it },
+            ide = if (s.shareIdeState) HostIdeSharing(project, root, rules, session) { appendLog(it) }.also { ideSharing = it } else null,
         )
         ApplicationManager.getApplication().invokeAndWait({
             bridge.install()
             hosting.consoles.install()
+            hosting.ide?.install()
         }, ModalityState.any())
         client.start()
         mode = hosting
@@ -562,7 +613,9 @@ class CollabSessionService(private val project: Project) : Disposable {
         clearConsoles()
         projectDir = ProjectDirMacro(root)
         // The host's runs and builds show in this IDE's Run and Build tool windows.
-        guestRuns = GuestRunMirror(project, this).also { addConsoleListener(it, it) }
+        guestRuns = GuestRunMirror(project, this, root).also { addConsoleListener(it, it) }
+        // The host's debugger position, breakpoints, branch and changes, and code style.
+        hostIde = GuestIdeMirror(project, root, this).also { it.install() }
         chatEntries.clear()
         unreadChat = 0
         mode = Mode.Joined(client, bridge, invite.project)
@@ -663,6 +716,7 @@ class CollabSessionService(private val project: Project) : Disposable {
         when (m) {
             is Mode.Hosting -> {
                 Disposer.dispose(m.consoles)
+                m.ide?.let(Disposer::dispose)
                 m.bridge.client.close()
                 m.session.close()
                 m.transports.forEach { runCatching { it.close() } }
@@ -672,6 +726,8 @@ class CollabSessionService(private val project: Project) : Disposable {
             is Mode.Joined -> {
                 guestRuns?.let(Disposer::dispose)
                 guestRuns = null
+                hostIde?.let(Disposer::dispose)
+                hostIde = null
                 m.client.close()
                 Disposer.dispose(m.bridge)
                 appendLog(message("log.left"))

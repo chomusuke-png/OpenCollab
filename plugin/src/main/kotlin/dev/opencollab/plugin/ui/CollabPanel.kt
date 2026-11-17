@@ -71,6 +71,7 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
     }
     internal val bottomTabs = JBTabbedPane() // internal: checked by CollabPanelTest
     private val chatPanel = ChatPanel(service)
+    private val hostPanel = HostIdePanel(service)
 
     // ---- Welcome (no session) ----------------------------------------------------------
     private val lastStatus = JBLabel().apply { foreground = UIUtil.getContextHelpForeground() }
@@ -132,6 +133,7 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         }
         bottomTabs.addTab(message("panel.chat.title"), chatPanel)
         bottomTabs.addTab(message("panel.activity.title"), activity)
+        bottomTabs.addTab(message("panel.host.title"), hostPanel)
         bottomTabs.addChangeListener { chatPanel.selected = bottomTabs.selectedComponent === chatPanel }
 
         idleView.add(welcome, BorderLayout.NORTH)
@@ -210,7 +212,7 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
 
     private fun showRunTargets() {
         val targets = service.runTargets
-        if (targets.isEmpty()) return
+        if (targets.isEmpty() && !service.canRequestCommands) return
         val menu = JPopupMenu()
         for (target in targets) {
             val icon = if (target.kind == RunTargetKind.BUILD) AllIcons.Actions.Compile else AllIcons.Actions.Execute
@@ -218,7 +220,20 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
                 addActionListener { if (service.requestRun(target)) CollabUi.toast(runOnHostButton, message("console.request.sent", target.name)) }
             })
         }
+        if (service.canRequestCommands) {
+            if (targets.isNotEmpty()) menu.addSeparator()
+            menu.add(JMenuItem(message("command.menu"), AllIcons.Debugger.Console).apply {
+                addActionListener { askForCommand() }
+            })
+        }
         menu.show(runOnHostButton, 0, runOnHostButton.height)
+    }
+
+    /** A shell command for the host's project folder; the host sees it and approves or refuses it. */
+    private fun askForCommand() {
+        val command = Messages.showInputDialog(project, message("command.dialog.message"), message("command.dialog.title"), null)
+            ?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        if (service.requestCommand(command)) CollabUi.toast(runOnHostButton, message("console.request.sent", command))
     }
 
     private fun showInviteMenu() {
@@ -365,7 +380,8 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         inviteButton.isVisible = hosting != null
         val guestEditor = mode is Mode.Joined && service.myRole?.canEdit == true
         runOnHostButton.isVisible = mode is Mode.Joined
-        runOnHostButton.isEnabled = guestEditor && service.runTargets.isNotEmpty()
+        runOnHostButton.isEnabled = guestEditor && (service.runTargets.isNotEmpty() || service.canRequestCommands)
+        hostPanel.refresh()
         runOnHostButton.toolTipText = if (mode is Mode.Joined && !guestEditor) message("console.viewer") else null
         leaveButton.isEnabled = mode is Mode.Hosting || mode is Mode.Joined
         leaveButton.text = message(if (hosting != null) "panel.end.session" else "panel.leave")

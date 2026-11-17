@@ -46,6 +46,10 @@ class OpenCollabSettings : PersistentStateComponent<OpenCollabSettings.State> {
         var presenceIntervalMs: Int = 0
         /** While hosting, send the output of runs, tests and builds to guests. */
         var shareConsoles: Boolean = true
+        /** While hosting, show guests the debugger (position, frames, variables), breakpoints, branch and changes, and code style. */
+        var shareIdeState: Boolean = true
+        /** While hosting, editors may ask to run terminal commands here (each one needs the host's approval). */
+        var allowCommandRequests: Boolean = true
     }
 
     private var state = State()

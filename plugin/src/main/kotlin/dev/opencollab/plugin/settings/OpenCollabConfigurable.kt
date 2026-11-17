@@ -71,6 +71,14 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
                     checkBox(message("settings.share.consoles")).bindSelected(s::shareConsoles)
                         .comment(message("settings.share.consoles.comment"))
                 }
+                row {
+                    checkBox(message("settings.share.ide")).bindSelected(s::shareIdeState)
+                        .comment(message("settings.share.ide.comment"))
+                }
+                row {
+                    checkBox(message("settings.allow.commands")).bindSelected(s::allowCommandRequests)
+                        .comment(message("settings.allow.commands.comment"))
+                }
             }
 
             group(message("settings.group.sharing")) {

@@ -13,6 +13,20 @@ import com.intellij.build.events.SuccessResult
 import com.intellij.execution.ExecutionListener
 import com.intellij.execution.ExecutionManager
 import com.intellij.execution.ProgramRunnerUtil
+import com.intellij.execution.configurations.GeneralCommandLine
+import com.intellij.execution.filters.TextConsoleBuilderFactory
+import com.intellij.execution.process.KillableColoredProcessHandler
+import com.intellij.execution.testframework.sm.ServiceMessageBuilder
+import com.intellij.execution.testframework.sm.runner.SMTRunnerEventsAdapter
+import com.intellij.execution.testframework.sm.runner.SMTRunnerEventsListener
+import com.intellij.execution.testframework.sm.runner.SMTestProxy
+import com.intellij.execution.ui.RunContentDescriptor
+import com.intellij.execution.ui.RunContentManager
+import com.intellij.openapi.util.Computable
+import com.intellij.openapi.project.DumbService
+import com.intellij.openapi.util.SystemInfo
+import com.intellij.psi.PsiDocumentManager
+import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.execution.RunManager
 import com.intellij.execution.RunManagerListener
 import com.intellij.execution.RunnerAndConfigurationSettings
@@ -36,24 +50,29 @@ import com.intellij.util.concurrency.AppExecutorUtil
 import dev.opencollab.core.protocol.ConsoleKind
 import dev.opencollab.core.protocol.ConsoleStream
 import dev.opencollab.core.files.ProjectDirMacro
+import dev.opencollab.core.files.SafePath
 import dev.opencollab.core.protocol.RunTarget
 import dev.opencollab.core.protocol.RunTargetKind
 import dev.opencollab.core.session.HostSession
 import dev.opencollab.core.session.RunRequestInfo
 import dev.opencollab.plugin.OpenCollabBundle.message
 import java.nio.file.Path
+import java.util.Collections
+import java.util.IdentityHashMap
+import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Host side of shared consoles: forwards the output of everything this IDE runs (run
- * configurations, tests, Gradle tasks) and of builds to the guests, publishes what guests may
- * ask to run, and asks the user before running anything a guest requests.
+ * configurations, tests, Gradle tasks) and of builds to the guests, with test progress as test
+ * events so guests get IntelliJ's test tree, publishes what guests may ask to run, and asks the
+ * user before running anything a guest requests (a run configuration, a build or a command).
  */
 class HostConsoleSharing(
     private val project: Project,
-    root: Path,
+    private val root: Path,
     private val session: HostSession,
     private val shareOutput: Boolean,
     private val log: (String) -> Unit,
@@ -66,11 +85,17 @@ class HostConsoleSharing(
     /** Run configurations launched for a guest, so their console says who asked. */
     private val launchedFor = ConcurrentHashMap<String, String>()
     private val projectDir = ProjectDirMacro(root)
+    /** Shared processes → console id, so test events find their console (weak: handlers end). */
+    private val consoleOf = Collections.synchronizedMap(WeakHashMap<ProcessHandler, String>())
+    /** Test tree node ids per console (test events are sent with ids, like parallel runners do). */
+    private val nodeIds = Collections.synchronizedMap(IdentityHashMap<SMTestProxy, String>())
+    private val nextNodeId = AtomicLong()
 
     // Output is batched per console and flushed every 50 ms, so chatty processes do not send a
     // message per line.
     private val lock = Any()
-    private val pending = LinkedHashMap<String, MutableList<Pair<ConsoleStream, StringBuilder>>>()
+    /** Per console, in order: output (a stream) or test events (null). */
+    private val pending = LinkedHashMap<String, MutableList<Pair<ConsoleStream?, StringBuilder>>>()
     private val flusher = AppExecutorUtil.getAppScheduledExecutorService()
         .scheduleWithFixedDelay(::flush, FLUSH_MS, FLUSH_MS, TimeUnit.MILLISECONDS)
 
@@ -87,6 +112,7 @@ class HostConsoleSharing(
             override fun processStarted(executorId: String, env: ExecutionEnvironment, handler: ProcessHandler) = shareProcess(env, handler)
         })
         project.getService(BuildViewManager::class.java)?.addListener(BuildProgressListener { buildId, event -> shareBuildEvent(buildId, event) }, this)
+        bus.subscribe(SMTRunnerEventsListener.TEST_STATUS, TestEvents())
     }
 
     override fun dispose() {
@@ -115,15 +141,22 @@ class HostConsoleSharing(
     fun onRunRequest(request: RunRequestInfo) {
         ApplicationManager.getApplication().invokeLater({
             if (project.isDisposed) return@invokeLater
-            if (request.participantId in alwaysAllowed) {
+            val command = request.command
+            // A shell command can do anything: it is never allowed without asking.
+            if (command == null && request.participantId in alwaysAllowed) {
                 grant(request)
                 return@invokeLater
             }
-            val text = message("console.request", StringUtil.escapeXmlEntities(request.displayName), StringUtil.escapeXmlEntities(request.label))
+            val who = StringUtil.escapeXmlEntities(request.displayName)
+            val text = if (command != null) {
+                message("command.request", who, StringUtil.escapeXmlEntities(command))
+            } else {
+                message("console.request", who, StringUtil.escapeXmlEntities(request.label))
+            }
             val notification = NotificationGroupManager.getInstance().getNotificationGroup("OpenCollab")
-                .createNotification(message("console.request.title"), text, NotificationType.WARNING)
+                .createNotification(message(if (command != null) "command.request.title" else "console.request.title"), text, NotificationType.WARNING)
             notification.addAction(NotificationAction.createSimpleExpiring(message("console.request.allow")) { grant(request) })
-            notification.addAction(NotificationAction.createSimpleExpiring(message("console.request.always")) {
+            if (command == null) notification.addAction(NotificationAction.createSimpleExpiring(message("console.request.always")) {
                 alwaysAllowed += request.participantId
                 grant(request)
             })
@@ -136,8 +169,9 @@ class HostConsoleSharing(
 
     /** EDT. Runs the target only if the request is still open (not expired, requester still here). */
     private fun grant(request: RunRequestInfo) {
+        val command = request.command
         val target = request.target
-        if (target == null || !targets.containsKey(target.id)) {
+        if (command == null && (target == null || !targets.containsKey(target.id))) {
             session.answerRun(request.participantId, request.requestId, accepted = false)
             return
         }
@@ -146,7 +180,11 @@ class HostConsoleSharing(
             return
         }
         log(message("console.request.running", request.displayName, request.label))
-        val settings = targets[target.id]
+        if (command != null) {
+            runCommand(command, request.participantId)
+            return
+        }
+        val settings = targets[target!!.id]
         if (settings == null) {
             ProjectTaskManager.getInstance(project).buildAllModules()
         } else {
@@ -155,14 +193,43 @@ class HostConsoleSharing(
         }
     }
 
+    // ---- Commands requested by guests ---------------------------------------------------------
+
+    /**
+     * EDT. Runs an approved command in a shell in the project folder, in a tab of this IDE's Run
+     * window (where the host can stop it), and shares its output like any other run.
+     */
+    private fun runCommand(command: String, requestedBy: String) {
+        val shell = if (SystemInfo.isWindows) listOf("cmd.exe", "/c", command) else listOf("/bin/sh", "-c", command)
+        val handler = try {
+            KillableColoredProcessHandler(GeneralCommandLine(shell).withWorkingDirectory(root).withCharset(Charsets.UTF_8))
+        } catch (e: Exception) {
+            log(message("command.failed", command, e.message ?: ""))
+            return
+        }
+        val title = message("command.title", command.take(60))
+        val console = TextConsoleBuilderFactory.getInstance().createBuilder(project).console
+        console.attachToProcess(handler)
+        val descriptor = RunContentDescriptor(console, handler, console.component, title)
+        RunContentManager.getInstance(project).showRunContent(DefaultRunExecutor.getRunExecutorInstance(), descriptor)
+        if (shareOutput) shareHandler(title, handler, requestedBy)
+        handler.startNotify()
+    }
+
     // ---- Processes ------------------------------------------------------------------------
 
     private fun shareProcess(env: ExecutionEnvironment, handler: ProcessHandler) {
-        val id = "p${ids.incrementAndGet()}"
         val requestedBy = env.runnerAndConfigurationSettings?.uniqueID?.let { launchedFor.remove(it) }
-        session.consoleStarted(id, env.runProfile.name, requestedBy)
+        shareHandler(env.runProfile.name, handler, requestedBy)
+    }
+
+    private fun shareHandler(title: String, handler: ProcessHandler, requestedBy: String?) {
+        val id = "p${ids.incrementAndGet()}"
+        consoleOf[handler] = id
+        session.consoleStarted(id, title, requestedBy)
         handler.addProcessListener(object : ProcessListener {
-            override fun onTextAvailable(event: ProcessEvent, outputType: Key<*>) = append(id, streamOf(outputType), event.text)
+            // Test runners report through service messages; guests get them as test events instead.
+            override fun onTextAvailable(event: ProcessEvent, outputType: Key<*>) = append(id, streamOf(outputType), withoutServiceMessages(event.text))
 
             override fun processTerminated(event: ProcessEvent) {
                 flush()
@@ -170,6 +237,83 @@ class HostConsoleSharing(
             }
         })
     }
+
+    private fun withoutServiceMessages(text: String): String {
+        if (!text.contains(SERVICE_MESSAGE)) return text
+        return text.split('\n').filterNot { it.trimStart().startsWith(SERVICE_MESSAGE) }.joinToString("\n")
+    }
+
+    // ---- Tests: the host's test tree, as test events for the guests' own test tree ----------
+
+    private inner class TestEvents : SMTRunnerEventsAdapter() {
+        override fun onTestingStarted(testsRoot: SMTestProxy.SMRootTestProxy) {
+            consoleFor(testsRoot)?.let { tests(it, ServiceMessageBuilder("enteredTheMatrix").toString()) }
+        }
+
+        override fun onTestsCountInSuite(count: Int) = Unit
+
+        override fun onSuiteStarted(suite: SMTestProxy) = started(suite, ServiceMessageBuilder.testSuiteStarted(suite.name))
+        override fun onTestStarted(test: SMTestProxy) = started(test, ServiceMessageBuilder.testStarted(test.name))
+
+        override fun onTestFailed(test: SMTestProxy) = event(test) { id ->
+            ServiceMessageBuilder.testFailed(test.name).addAttribute("nodeId", id)
+                .addAttribute("message", test.errorMessage.orEmpty())
+                .addAttribute("details", test.stacktrace.orEmpty())
+        }
+
+        override fun onTestIgnored(test: SMTestProxy) = event(test) { id ->
+            ServiceMessageBuilder.testIgnored(test.name).addAttribute("nodeId", id).addAttribute("message", test.errorMessage.orEmpty())
+        }
+
+        override fun onTestFinished(test: SMTestProxy) {
+            event(test) { id -> ServiceMessageBuilder.testFinished(test.name).addAttribute("nodeId", id).addAttribute("duration", (test.duration ?: 0L).toString()) }
+            nodeIds.remove(test)
+        }
+
+        override fun onSuiteFinished(suite: SMTestProxy) {
+            event(suite) { id -> ServiceMessageBuilder.testSuiteFinished(suite.name).addAttribute("nodeId", id) }
+            nodeIds.remove(suite)
+        }
+
+        private fun started(proxy: SMTestProxy, builder: ServiceMessageBuilder) {
+            val console = consoleFor(proxy.root ?: return) ?: return
+            val id = "${nextNodeId.incrementAndGet()}"
+            nodeIds[proxy] = id
+            val parent = proxy.parent?.let { nodeIds[it] } ?: "0"
+            builder.addAttribute("nodeId", id).addAttribute("parentNodeId", parent)
+            locationHint(proxy)?.let { builder.addAttribute("locationHint", it) }
+            tests(console, builder.toString())
+        }
+
+        private fun event(proxy: SMTestProxy, message: (String) -> ServiceMessageBuilder) {
+            val console = consoleFor(proxy.root ?: return) ?: return
+            val id = nodeIds[proxy] ?: return
+            tests(console, message(id).toString())
+        }
+
+        private fun consoleFor(root: SMTestProxy.SMRootTestProxy): String? = root.handler?.let { consoleOf[it] }
+    }
+
+    /**
+     * Where a test is, as `opencollab://path:line` in the shared project (guests resolve it in their
+     * copy); null outside the project or while indexing.
+     */
+    private fun locationHint(proxy: SMTestProxy): String? {
+        if (proxy.locationUrl == null || DumbService.isDumb(project)) return null
+        return try {
+            ApplicationManager.getApplication().runReadAction(Computable<String?> {
+                val element = proxy.getLocation(project, GlobalSearchScope.allScope(project))?.psiElement ?: return@Computable null
+                val file = element.containingFile ?: return@Computable null
+                val path = file.virtualFile?.let { SafePath.relativize(root, it.toNioPath()) } ?: return@Computable null
+                val line = PsiDocumentManager.getInstance(project).getDocument(file)?.getLineNumber(element.textOffset) ?: 0
+                "$TEST_PROTOCOL://$path:$line"
+            })
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun tests(consoleId: String, serviceMessage: String) = append(consoleId, null, serviceMessage + "\n")
 
     private fun streamOf(type: Key<*>) = when (type) {
         ProcessOutputTypes.STDERR -> ConsoleStream.STDERR
@@ -211,7 +355,7 @@ class HostConsoleSharing(
 
     // ---- Batching -------------------------------------------------------------------------
 
-    private fun append(consoleId: String, stream: ConsoleStream, text: String) {
+    private fun append(consoleId: String, stream: ConsoleStream?, text: String) {
         if (text.isEmpty()) return
         synchronized(lock) {
             val parts = pending.getOrPut(consoleId) { mutableListOf() }
@@ -226,12 +370,18 @@ class HostConsoleSharing(
             LinkedHashMap(pending).also { pending.clear() }
         }
         for ((id, parts) in batch) {
-            for ((stream, text) in parts) session.consoleOutput(id, stream, projectDir.hide(text.toString()))
+            for ((stream, text) in parts) {
+                val shared = projectDir.hide(text.toString())
+                if (stream == null) session.consoleTests(id, shared) else session.consoleOutput(id, stream, shared)
+            }
         }
     }
 
     companion object {
         const val BUILD_ID = "build"
+        /** Locations in shared test events: `opencollab://relative/path:line`. */
+        const val TEST_PROTOCOL = "opencollab"
+        private const val SERVICE_MESSAGE = "##teamcity["
         private const val FLUSH_MS = 50L
     }
 }

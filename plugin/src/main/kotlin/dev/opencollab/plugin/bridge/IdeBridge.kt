@@ -78,6 +78,8 @@ interface BridgeListener {
     fun onConsoleEnded(ended: Message.ConsoleEnded) {}
     fun onRunTargets(targets: List<RunTarget>) {}
     fun onRunResponse(response: Message.RunResponse) {}
+    /** The host IDE's test events, debugger state, breakpoints, VCS status or code style (I/O thread). */
+    fun onHostIdeState(message: Message) {}
 }
 
 /**
@@ -201,6 +203,7 @@ class IdeBridge(
     override fun onConsoleEnded(ended: Message.ConsoleEnded) = listener.onConsoleEnded(ended)
     override fun onRunTargets(targets: List<RunTarget>) = listener.onRunTargets(targets)
     override fun onRunResponse(response: Message.RunResponse) = listener.onRunResponse(response)
+    override fun onHostIdeState(message: Message) = listener.onHostIdeState(message)
 
     override fun onParticipantsChanged(participants: List<ParticipantInfo>) {
         this.participants.clear()

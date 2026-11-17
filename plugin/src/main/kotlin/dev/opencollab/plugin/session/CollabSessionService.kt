@@ -265,8 +265,8 @@ class CollabSessionService(private val project: Project) : Disposable {
         fire()
     }
 
-    private fun notify(message: String, type: NotificationType = NotificationType.INFORMATION) {
-        NotificationGroupManager.getInstance().getNotificationGroup("OpenCollab").createNotification(message, type).notify(project)
+    private fun notify(message: String, type: NotificationType = NotificationType.INFORMATION, title: String = "") {
+        NotificationGroupManager.getInstance().getNotificationGroup("OpenCollab").createNotification(title, message, type).notify(project)
     }
 
     private fun projectRoot(): Path {
@@ -367,12 +367,19 @@ class CollabSessionService(private val project: Project) : Disposable {
         }
         override fun onRunResponse(response: Message.RunResponse) {
             val name = runRequests.remove(response.requestId) ?: return
+            // Notification content is HTML: a command may contain <, > or &.
+            val shown = StringUtil.escapeXmlEntities(name)
             if (response.accepted) {
                 appendLog(message("console.request.accepted", name))
+                ApplicationManager.getApplication().invokeLater({
+                    notify(message("console.request.accepted", shown), title = message("console.accepted.title"))
+                }, ModalityState.any())
             } else {
                 val why = message("console.refused.${response.reason ?: RunRefusal.REFUSED}")
                 appendLog(message("console.request.refused", name, why))
-                ApplicationManager.getApplication().invokeLater({ notify(message("console.request.refused", name, why), NotificationType.WARNING) }, ModalityState.any())
+                ApplicationManager.getApplication().invokeLater({
+                    notify(message("console.request.refused", shown, why), NotificationType.WARNING, message("console.refused.title"))
+                }, ModalityState.any())
             }
         }
         override fun onFollowingChanged(participantId: String?) {

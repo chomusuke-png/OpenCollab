@@ -87,3 +87,20 @@ tasks {
         systemProperty("idea.force.use.core.classloader", "true")
     }
 }
+
+// Every packaged build gets its own version: once buildPlugin succeeds, the Revision in
+// gradle.properties goes up by one so the next build is numbered after it. The values are
+// locals of this block (not script-level vals) so the configuration cache can store the action.
+tasks.named("buildPlugin") {
+    val versionProperties = rootProject.file("gradle.properties")
+    val builtVersion = project.version.toString()
+    doLast {
+        val text = versionProperties.readText()
+        val match = Regex("""(?m)^opencollabVersion=(\d+)\.(\d+)\.(\d+)[ \t]*$""").find(text)
+            ?: throw GradleException("opencollabVersion in gradle.properties must be Major.Minor.Revision")
+        val (major, minor, revision) = match.destructured
+        val next = "$major.$minor.${revision.toInt() + 1}"
+        versionProperties.writeText(text.replaceRange(match.range, "opencollabVersion=$next"))
+        logger.lifecycle("Built OpenCollab $builtVersion; the next build will be $next.")
+    }
+}

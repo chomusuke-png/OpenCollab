@@ -32,9 +32,9 @@ auto-provisioned if missing), internet access for the first build (it downloads 
 ```bash
 ./gradlew :core:test :transport:test :relay-server:test   # fast tests (no IDE)
 ./gradlew :plugin:test                                     # IntelliJ Platform tests, incl. two IDE processes
-./gradlew :plugin:buildPlugin                              # -> plugin/build/distributions/OpenCollab-0.1.0.zip
+./gradlew :plugin:buildPlugin                              # -> plugin/build/distributions/OpenCollab-<version>.zip
 ./gradlew :plugin:runIde                                   # sandbox IDE with the plugin
-./gradlew :relay-server:shadowJar                          # -> relay-server/build/libs/opencollab-relay-0.1.0-all.jar
+./gradlew :relay-server:shadowJar                          # -> relay-server/build/libs/opencollab-relay-<version>-all.jar
 ```
 
 On Windows use `gradlew.bat` instead of `./gradlew`.

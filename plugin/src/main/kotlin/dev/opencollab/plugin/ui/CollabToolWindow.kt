@@ -36,7 +36,6 @@ import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.ui.components.JBRadioButton
 import java.nio.file.Files
 import java.nio.file.Path
-import javax.swing.ButtonGroup
 import dev.opencollab.plugin.settings.OpenCollabConfigurable
 import java.awt.BorderLayout
 import java.awt.FlowLayout
@@ -217,7 +216,6 @@ class JoinDialog(private val project: Project) : DialogWrapper(project) {
     init {
         title = message("join.title")
         setOKButtonText(message("join.button"))
-        ButtonGroup().apply { add(useCurrent); add(useNew) }
         useCurrent.isEnabled = currentUsable
         (if (currentUsable) useCurrent else useNew).isSelected = true
         folderField.addBrowseFolderListener(
@@ -235,8 +233,11 @@ class JoinDialog(private val project: Project) : DialogWrapper(project) {
         row { label(message("join.prompt")) }
         row { scrollCell(inviteArea).rows(6).align(AlignX.FILL) }
         row { label(message("join.target.label")) }
-        row { cell(useCurrent) }
-        row { cell(useNew) }
+        // The DSL owns the radio grouping: a cell() radio button outside buttonsGroup throws.
+        buttonsGroup {
+            row { cell(useCurrent) }
+            row { cell(useNew) }
+        }
         row { cell(folderField).align(AlignX.FILL).comment(message("join.target.new.comment")) }
         row { comment(message("join.comment")) }
     }

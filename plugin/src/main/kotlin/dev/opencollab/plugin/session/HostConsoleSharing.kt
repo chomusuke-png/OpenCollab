@@ -109,7 +109,15 @@ class HostConsoleSharing(
         publishTargets()
         if (!shareOutput) return
         bus.subscribe(ExecutionManager.EXECUTION_TOPIC, object : ExecutionListener {
-            override fun processStarted(executorId: String, env: ExecutionEnvironment, handler: ProcessHandler) = shareProcess(env, handler)
+            // Before the process starts: a short program (e.g. Hello World) can print and end before
+            // processStarted, and its output and end would be lost.
+            override fun processStarting(executorId: String, env: ExecutionEnvironment, handler: ProcessHandler) = shareProcess(env, handler)
+            override fun processStarted(executorId: String, env: ExecutionEnvironment, handler: ProcessHandler) {
+                if (!consoleOf.containsKey(handler)) shareProcess(env, handler) // not announced as starting
+            }
+            override fun processTerminated(executorId: String, env: ExecutionEnvironment, handler: ProcessHandler, exitCode: Int) {
+                consoleOf[handler]?.let { endConsole(it, exitCode) }
+            }
         })
         project.getService(BuildViewManager::class.java)?.addListener(BuildProgressListener { buildId, event -> shareBuildEvent(buildId, event) }, this)
         bus.subscribe(SMTRunnerEventsListener.TEST_STATUS, TestEvents())
@@ -220,10 +228,12 @@ class HostConsoleSharing(
 
     private fun shareProcess(env: ExecutionEnvironment, handler: ProcessHandler) {
         val requestedBy = env.runnerAndConfigurationSettings?.uniqueID?.let { launchedFor.remove(it) }
-        shareHandler(env.runProfile.name, handler, requestedBy)
+        val title = runCatching { env.runProfile.name }.getOrNull()?.takeIf { it.isNotBlank() } ?: "?"
+        shareHandler(title, handler, requestedBy)
     }
 
     private fun shareHandler(title: String, handler: ProcessHandler, requestedBy: String?) {
+        if (consoleOf.containsKey(handler)) return
         val id = "p${ids.incrementAndGet()}"
         consoleOf[handler] = id
         session.consoleStarted(id, title, requestedBy)
@@ -231,11 +241,19 @@ class HostConsoleSharing(
             // Test runners report through service messages; guests get them as test events instead.
             override fun onTextAvailable(event: ProcessEvent, outputType: Key<*>) = append(id, streamOf(outputType), withoutServiceMessages(event.text))
 
-            override fun processTerminated(event: ProcessEvent) {
-                flush()
-                session.consoleEnded(id, event.exitCode)
-            }
+            override fun processTerminated(event: ProcessEvent) = endConsole(id, event.exitCode)
         })
+        // Already over (shared late): end it now, or the guests' tab would keep running.
+        if (handler.isProcessTerminated) endConsole(id, handler.exitCode ?: 0)
+    }
+
+    /** Consoles whose end was sent (a process end can be reported twice). */
+    private val endedConsoles = ConcurrentHashMap.newKeySet<String>()
+
+    private fun endConsole(id: String, exitCode: Int?) {
+        if (!endedConsoles.add(id)) return
+        flush()
+        session.consoleEnded(id, exitCode)
     }
 
     private fun withoutServiceMessages(text: String): String {

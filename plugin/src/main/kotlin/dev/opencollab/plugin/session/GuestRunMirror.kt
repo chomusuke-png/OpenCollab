@@ -58,6 +58,9 @@ class GuestRunMirror(
         var transcriptChars = 0
     }
     private val runs = HashMap<String, Run>()
+
+    /** The Run tab showing host console [consoleId] (for tests). */
+    internal fun runDescriptor(consoleId: String): RunContentDescriptor? = runs[consoleId]?.descriptor
     private class Build(val id: Any) {
         /** Output not ending in a line break yet: error lines are recognised once complete. */
         val partialLine = StringBuilder()

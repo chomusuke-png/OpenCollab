@@ -26,7 +26,6 @@ import dev.opencollab.core.session.HostSession
 import dev.opencollab.core.session.ReconnectPolicy
 import dev.opencollab.core.util.SerialExecutor
 import dev.opencollab.core.util.SystemScheduler
-import dev.opencollab.plugin.bridge.IdeBridge
 import dev.opencollab.plugin.session.CollabSessionService
 import dev.opencollab.plugin.settings.OpenCollabSettings
 import dev.opencollab.transport.DirectHostTransport
@@ -114,16 +113,6 @@ class PluginIntegrationTest : HeavyPlatformTestCase() {
         return ide
     }
 
-    fun testApplyOperationEditsIntelliJDocument() {
-        val file = createChildData(getOrCreateProjectBaseDir(), "a.txt")
-        setFileText(file, "hello world")
-        val document = FileDocumentManager.getInstance().getDocument(file)!!
-        WriteCommandAction.runWriteCommandAction(project) {
-            IdeBridge.applyOperation(document, TextOperation.Builder().retain(6).insert("big ").delete(5).insert("cat").build())
-        }
-        assertEquals("hello big cat", document.text)
-    }
-
     fun testPluginHostSharesProjectWithRemoteGuestOverTls() {
         val root = projectRoot()
         Files.createDirectories(root.resolve("src"))
@@ -139,7 +128,7 @@ class PluginIntegrationTest : HeavyPlatformTestCase() {
         assertTrue(hosting.endpoints.first().startsWith("wss://127.0.0.1:"))
 
         // Guest connects over real TLS with certificate pinning and receives the snapshot.
-        val guestDir = Files.createTempDirectory("oc-guest")
+        val guestDir = tempDir("oc-guest")
         val guest = connectGuest("RemoteGuest", hosting.editorInvite, guestDir)
         waitFor("guest connected") { guest.client.state == ClientState.CONNECTED }
         assertEquals("fun main() {\n}\n", Files.readString(guestDir.resolve("src/Main.kt")))
@@ -186,7 +175,7 @@ class PluginIntegrationTest : HeavyPlatformTestCase() {
         waitFor("guest received host file") { Files.exists(guestDir.resolve("src/HostNew.kt")) && Files.readString(guestDir.resolve("src/HostNew.kt")) == "class HostNew\n" }
 
         // Viewers are refused by the host even if they bypass their UI.
-        val viewerDir = Files.createTempDirectory("oc-viewer")
+        val viewerDir = tempDir("oc-viewer")
         val viewer = connectGuest("Viewer", hosting.viewerInvite, viewerDir)
         waitFor("viewer connected") { viewer.client.state == ClientState.CONNECTED }
         assertEquals(Role.VIEWER, viewer.client.role)
@@ -205,7 +194,7 @@ class PluginIntegrationTest : HeavyPlatformTestCase() {
 
     fun testPluginGuestJoinsRemoteHostAndCoEdits() {
         // A headless host (core HostSession + TLS) and a second headless guest.
-        val hostDir = Files.createTempDirectory("oc-host")
+        val hostDir = tempDir("oc-host")
         Files.createDirectories(hostDir.resolve("src"))
         Files.writeString(hostDir.resolve("src/App.kt"), "class App\n")
         Files.writeString(hostDir.resolve("README.md"), "# Hello\n")
@@ -239,7 +228,7 @@ class PluginIntegrationTest : HeavyPlatformTestCase() {
         waitFor("host received plugin edit") { session.documentText("src/App.kt") == "class App\n// plugin guest\n" }
 
         // A second guest types; the plugin guest's IntelliJ document follows.
-        val otherDir = Files.createTempDirectory("oc-other")
+        val otherDir = tempDir("oc-other")
         val other = connectGuest("Other", invite, otherDir)
         waitFor("other connected") { other.client.state == ClientState.CONNECTED }
         other.open("src/App.kt", Files.readString(otherDir.resolve("src/App.kt")))

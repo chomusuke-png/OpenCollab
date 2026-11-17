@@ -28,7 +28,7 @@ open class TwoIdeInstancesTest : HeavyPlatformTestCase() {
 
     open fun testSimultaneousEditingAcrossTwoIdeProcesses() {
         if (System.getProperty(E2E_DIR) != null) return // we are the child process
-        val exchange = Files.createTempDirectory("oc-e2e")
+        val exchange = tempDir("oc-e2e")
         val root = Path.of(project.basePath!!)
         Files.createDirectories(root.resolve("src"))
         Files.writeString(root.resolve("src/Shared.kt"), "// shared\n")

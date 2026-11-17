@@ -24,7 +24,7 @@ import java.nio.file.Path
 /** Test events as the host sends them build IntelliJ's test tree on a guest, with locations in the mirror. */
 class SharedTestTreeTest : HeavyPlatformTestCase() {
     fun testHostTestEventsBecomeTheGuestsTestTree() {
-        val root = Files.createTempDirectory("opencollab-tests")
+        val root = tempDir("opencollab-tests")
         Files.createDirectories(root.resolve("src"))
         Files.writeString(root.resolve("src/CalcTest.kt"), "class CalcTest {\n    fun adds() {}\n\n    fun divides() {}\n}\n")
         LocalFileSystem.getInstance().refreshAndFindFileByNioFile(root)?.let { VfsUtil.markDirtyAndRefresh(false, true, true, it) }

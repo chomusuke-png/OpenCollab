@@ -72,7 +72,7 @@ class PortForwardingAndJoinTest : HeavyPlatformTestCase() {
 
         // A guest that can ONLY use the public (forwarded) endpoint.
         val onlyPublic = invite.copy(direct = listOf("wss://localhost:$port"))
-        val dir = Files.createTempDirectory("oc-pf-guest")
+        val dir = tempDir("oc-pf-guest")
         val guest = RemoteIde("pf")
         guest.client = CollabClient(onlyPublic.connector(), "Remote", onlyPublic.token, guest, guest.edt, scheduler,
             MirrorWorkspace(dir), ReconnectPolicy(maxAttempts = 2))
@@ -94,7 +94,7 @@ class PortForwardingAndJoinTest : HeavyPlatformTestCase() {
     }
 
     fun testPendingJoinCompletesWhenTheNewProjectOpens() {
-        val hostDir = Files.createTempDirectory("oc-pj-host")
+        val hostDir = tempDir("oc-pj-host")
         Files.writeString(hostDir.resolve("A.kt"), "class A\n")
         val files = ProjectFiles(hostDir, SharingRules())
         val session = HostSession(HostConfig("pj"), files, DocumentSource { files.read(it)?.toString(Charsets.UTF_8) }, scheduler)
@@ -114,7 +114,7 @@ class PortForwardingAndJoinTest : HeavyPlatformTestCase() {
     }
 
     fun testSuggestedFolderAvoidsNonEmptyFolders() {
-        val base = Files.createTempDirectory("oc-suggest")
+        val base = tempDir("oc-suggest")
         assertEquals(base.resolve("My_Proj"), PendingJoins.suggestFolder("My:Proj", base))
         Files.createDirectories(base.resolve("My_Proj"))
         Files.writeString(base.resolve("My_Proj/own.txt"), "x")

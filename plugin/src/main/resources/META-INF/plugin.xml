@@ -1,0 +1,31 @@
+<idea-plugin>
+    <id>dev.opencollab</id>
+    <name>OpenCollab</name>
+    <vendor>OpenCollab contributors</vendor>
+
+    <!-- Platform core only: works with the free features of IntelliJ IDEA. -->
+    <depends>com.intellij.modules.platform</depends>
+
+    <!-- English by default; Spanish (OpenCollabBundle_es) when the IDE language is Spanish. -->
+    <resource-bundle>messages.OpenCollabBundle</resource-bundle>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="OpenCollab" anchor="right" icon="AllIcons.Toolwindows.ToolWindowServices"
+                    factoryClass="dev.opencollab.plugin.ui.CollabToolWindowFactory"/>
+        <applicationConfigurable parentId="tools" id="dev.opencollab.settings"
+                                 bundle="messages.OpenCollabBundle" key="configurable.name"
+                                 instance="dev.opencollab.plugin.settings.OpenCollabConfigurable"/>
+        <notificationGroup id="OpenCollab" displayType="BALLOON" key="notification.group.OpenCollab"/>
+    </extensions>
+
+    <!-- Texts come from action.<id>.text / action.<id>.description in the bundle. -->
+    <actions>
+        <group id="OpenCollab.Menu" popup="true">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <action id="OpenCollab.StartHosting" class="dev.opencollab.plugin.actions.StartHostingAction"/>
+            <action id="OpenCollab.Join" class="dev.opencollab.plugin.actions.JoinSessionAction"/>
+            <action id="OpenCollab.CopyInvite" class="dev.opencollab.plugin.actions.CopyInviteAction"/>
+            <action id="OpenCollab.Leave" class="dev.opencollab.plugin.actions.LeaveSessionAction"/>
+        </group>
+    </actions>
+</idea-plugin>

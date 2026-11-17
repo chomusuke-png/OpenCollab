@@ -1,0 +1,220 @@
+package dev.opencollab.core.protocol
+
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+
+const val PROTOCOL_VERSION = 1
+
+@Serializable
+enum class Role {
+    HOST, EDITOR, VIEWER;
+
+    val canEdit: Boolean get() = this == HOST || this == EDITOR
+}
+
+@Serializable
+data class ParticipantInfo(
+    val id: String,
+    val displayName: String,
+    val role: Role,
+    val colorIndex: Int,
+)
+
+/** The host's sharing rules, sent to guests so they filter local changes the same way. */
+@Serializable
+data class SharingConfig(
+    val excludes: List<String>,
+    val includes: List<String>,
+    val guestReadOnly: List<String>,
+    val maxFileBytes: Long,
+)
+
+@Serializable
+data class TextRange(val start: Int, val end: Int)
+
+@Serializable
+data class FileEntry(
+    val path: String,
+    val size: Long,
+    val sha256: String,
+    val directory: Boolean = false,
+)
+
+@Serializable
+enum class FileOpKind { CREATE_FILE, CREATE_DIRECTORY, WRITE, DELETE, RENAME }
+
+/**
+ * A filesystem change. For RENAME, [newPath] is the destination (moves are renames to
+ * another directory). [contentBase64] is used by CREATE_FILE and WRITE.
+ */
+@Serializable
+data class FileMutation(
+    val kind: FileOpKind,
+    val path: String,
+    val newPath: String? = null,
+    val contentBase64: String? = null,
+)
+
+@Serializable
+data class DocHistoryEntry(val opId: String, val author: String, val revision: Int, val op: JsonElement)
+
+/** All messages exchanged between a participant and the host. */
+@Serializable
+sealed class Message {
+    // ---- Handshake & membership -------------------------------------------------------
+    @Serializable @SerialName("hello")
+    data class Hello(
+        val protocolVersion: Int,
+        val displayName: String,
+        val token: String,
+        val resumeKey: String? = null,
+        val pluginVersion: String = "",
+    ) : Message()
+
+    @Serializable @SerialName("welcome")
+    data class Welcome(
+        val sessionId: String,
+        val participantId: String,
+        val role: Role,
+        val resumeKey: String,
+        val resumed: Boolean,
+        val projectName: String,
+        val participants: List<ParticipantInfo>,
+        val fileEventSeq: Long,
+        val sharing: SharingConfig,
+    ) : Message()
+
+    @Serializable @SerialName("rejected")
+    data class HandshakeRejected(val reason: String) : Message()
+
+    @Serializable @SerialName("participantJoined")
+    data class ParticipantJoined(val participant: ParticipantInfo) : Message()
+
+    @Serializable @SerialName("participantLeft")
+    data class ParticipantLeft(val participantId: String) : Message()
+
+    @Serializable @SerialName("roleChanged")
+    data class RoleChanged(val participantId: String, val role: Role) : Message()
+
+    @Serializable @SerialName("setRole")
+    data class SetRole(val participantId: String, val role: Role) : Message()
+
+    @Serializable @SerialName("error")
+    data class Error(val code: String, val message: String, val requestId: String? = null) : Message()
+
+    @Serializable @SerialName("sessionEnded")
+    data class SessionEnded(val reason: String) : Message()
+
+    // ---- Project snapshot & files -----------------------------------------------------
+    /** Asks for the manifest of all shared files. */
+    @Serializable @SerialName("requestManifest")
+    data class RequestManifest(val requestId: String) : Message()
+
+    @Serializable @SerialName("manifest")
+    data class Manifest(val requestId: String, val files: List<FileEntry>, val fileEventSeq: Long) : Message()
+
+    /** Asks for the content of specific files (after comparing the manifest with local hashes). */
+    @Serializable @SerialName("requestFiles")
+    data class RequestFiles(val requestId: String, val paths: List<String>) : Message()
+
+    @Serializable @SerialName("fileChunk")
+    data class FileChunk(
+        val requestId: String,
+        val path: String,
+        val offset: Long,
+        val dataBase64: String,
+        val last: Boolean,
+        val sha256: String,
+    ) : Message()
+
+    @Serializable @SerialName("filesDone")
+    data class FilesDone(val requestId: String, val missing: List<String>) : Message()
+
+    /** Guest → host: request to change the shared project tree. */
+    @Serializable @SerialName("fileRequest")
+    data class FileRequest(val requestId: String, val mutation: FileMutation) : Message()
+
+    /** Host → participants: an applied change to the shared tree. */
+    @Serializable @SerialName("fileEvent")
+    data class FileEvent(val seq: Long, val origin: String, val mutation: FileMutation) : Message()
+
+    /** Participant → host after reconnecting: replay file events after [lastSeq]. */
+    @Serializable @SerialName("resumeFiles")
+    data class ResumeFiles(val requestId: String, val lastSeq: Long) : Message()
+
+    /** Host → participant: replay is impossible, fetch a fresh manifest instead. */
+    @Serializable @SerialName("filesResyncRequired")
+    data class FilesResyncRequired(val requestId: String) : Message()
+
+    @Serializable @SerialName("result")
+    data class RequestResult(val requestId: String, val ok: Boolean, val error: String? = null) : Message()
+
+    // ---- Documents (OT) ---------------------------------------------------------------
+    @Serializable @SerialName("openDoc")
+    data class OpenDocument(val path: String) : Message()
+
+    @Serializable @SerialName("closeDoc")
+    data class CloseDocument(val path: String) : Message()
+
+    /**
+     * Full document state. [outstandingApplied] answers whether the requester's in-flight
+     * operation ([ResumeDocument.outstandingOpId]) was already applied.
+     */
+    @Serializable @SerialName("docState")
+    data class DocumentState(
+        val path: String,
+        val revision: Int,
+        val text: String,
+        val outstandingApplied: Boolean = false,
+    ) : Message()
+
+    @Serializable @SerialName("resumeDoc")
+    data class ResumeDocument(
+        val path: String,
+        val revision: Int,
+        val outstandingOpId: String? = null,
+        /** Skip history replay and send the full state (used after protocol errors). */
+        val forceSnapshot: Boolean = false,
+    ) : Message()
+
+    @Serializable @SerialName("docCatchUp")
+    data class DocumentCatchUp(val path: String, val fromRevision: Int, val entries: List<DocHistoryEntry>) : Message()
+
+    @Serializable @SerialName("op")
+    data class DocOp(val path: String, val opId: String, val baseRevision: Int, val op: JsonElement) : Message()
+
+    @Serializable @SerialName("remoteOp")
+    data class RemoteOp(val path: String, val opId: String, val author: String, val revision: Int, val op: JsonElement) : Message()
+
+    @Serializable @SerialName("ack")
+    data class OpAck(val path: String, val opId: String, val revision: Int) : Message()
+
+    @Serializable @SerialName("opRejected")
+    data class OpRejected(val path: String, val opId: String, val reason: String) : Message()
+
+    @Serializable @SerialName("docUnavailable")
+    data class DocumentUnavailable(val path: String, val reason: String) : Message()
+
+    @Serializable @SerialName("docSaved")
+    data class DocumentSaved(val path: String, val revision: Int) : Message()
+
+    // ---- Presence ---------------------------------------------------------------------
+    /** Sent by a participant; the host stamps the sender and relays it as [PresenceBroadcast]. */
+    @Serializable @SerialName("presence")
+    data class Presence(val path: String?, val caret: Int, val selections: List<TextRange>) : Message()
+
+    @Serializable @SerialName("presenceBroadcast")
+    data class PresenceBroadcast(
+        val participantId: String,
+        val path: String?,
+        val caret: Int,
+        val selections: List<TextRange>,
+    ) : Message()
+
+    @Serializable @SerialName("ping")
+    data class Ping(val nonce: Long) : Message()
+
+    @Serializable @SerialName("pong")
+    data class Pong(val nonce: Long) : Message()
+}

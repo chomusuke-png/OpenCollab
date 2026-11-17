@@ -1,0 +1,156 @@
+package dev.opencollab.core.protocol
+
+import dev.opencollab.core.files.SafePath
+import dev.opencollab.core.ot.TextOperation
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.intOrNull
+import java.util.Base64
+
+class ProtocolException(message: String) : RuntimeException(message)
+
+/**
+ * Encodes/decodes protocol messages as JSON and validates every inbound message before it
+ * reaches session logic. Nothing received from the network is trusted.
+ */
+object MessageCodec {
+    const val MAX_FRAME_CHARS = 16 * 1024 * 1024
+    const val MAX_CHUNK_BYTES = 512 * 1024
+    const val MAX_NAME = 64
+    const val MAX_ID = 128
+    const val MAX_OP_COMPONENTS = 100_000
+    const val MAX_SELECTIONS = 64
+    const val MAX_PATHS_PER_REQUEST = 20_000
+
+    private val json = Json {
+        classDiscriminator = "t"
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+    }
+
+    fun encode(message: Message): String = json.encodeToString(Message.serializer(), message)
+
+    fun decode(text: String): Message {
+        if (text.length > MAX_FRAME_CHARS) throw ProtocolException("Frame too large (${text.length} chars)")
+        val message = try {
+            json.decodeFromString(Message.serializer(), text)
+        } catch (e: SerializationException) {
+            throw ProtocolException("Malformed message: ${e.message?.take(200)}")
+        } catch (e: IllegalArgumentException) {
+            throw ProtocolException("Malformed message: ${e.message?.take(200)}")
+        }
+        validate(message)
+        return message
+    }
+
+    fun opToJson(op: TextOperation): JsonElement = JsonArray(op.toWire().map {
+        when (it) {
+            is String -> JsonPrimitive(it)
+            is Int -> JsonPrimitive(it)
+            else -> error("unreachable")
+        }
+    })
+
+    fun opFromJson(element: JsonElement): TextOperation {
+        val array = element as? JsonArray ?: throw ProtocolException("Operation must be an array")
+        if (array.size > MAX_OP_COMPONENTS) throw ProtocolException("Operation has too many components")
+        val components: List<Any> = array.map { c ->
+            val p = c as? JsonPrimitive ?: throw ProtocolException("Invalid operation component")
+            if (p.isString) p.content else p.intOrNull ?: throw ProtocolException("Invalid operation component")
+        }
+        return try {
+            TextOperation.fromWire(components)
+        } catch (e: IllegalArgumentException) {
+            throw ProtocolException("Invalid operation: ${e.message}")
+        }
+    }
+
+    fun decodeBase64(data: String): ByteArray = try {
+        Base64.getDecoder().decode(data)
+    } catch (e: IllegalArgumentException) {
+        throw ProtocolException("Invalid base64 payload")
+    }
+
+    fun encodeBase64(data: ByteArray): String = Base64.getEncoder().encodeToString(data)
+
+    private fun validate(m: Message) {
+        when (m) {
+            is Message.Hello -> {
+                check(m.displayName.isNotBlank() && m.displayName.length <= MAX_NAME, "Invalid display name")
+                check(m.displayName.none { it.isISOControl() }, "Invalid display name")
+                check(m.token.length in 1..256, "Invalid token")
+                m.resumeKey?.let { check(it.length <= MAX_ID, "Invalid resume key") }
+            }
+            is Message.SetRole -> id(m.participantId)
+            is Message.RequestManifest -> id(m.requestId)
+            is Message.RequestFiles -> {
+                id(m.requestId)
+                check(m.paths.size <= MAX_PATHS_PER_REQUEST, "Too many paths")
+                m.paths.forEach(::path)
+            }
+            is Message.FileChunk -> {
+                id(m.requestId); path(m.path)
+                check(m.offset >= 0 && m.dataBase64.length <= MAX_CHUNK_BYTES * 2, "Invalid chunk")
+            }
+            is Message.Manifest -> { id(m.requestId); m.files.forEach { path(it.path) } }
+            is Message.FileRequest -> { id(m.requestId); mutation(m.mutation) }
+            is Message.FileEvent -> mutation(m.mutation)
+            is Message.ResumeFiles -> { id(m.requestId); check(m.lastSeq >= 0, "Invalid sequence") }
+            is Message.OpenDocument -> path(m.path)
+            is Message.CloseDocument -> path(m.path)
+            is Message.DocumentState -> { path(m.path); check(m.revision >= 0, "Invalid revision") }
+            is Message.ResumeDocument -> {
+                path(m.path); check(m.revision >= 0, "Invalid revision")
+                m.outstandingOpId?.let(::id)
+            }
+            is Message.DocumentCatchUp -> { path(m.path); m.entries.forEach { id(it.opId); opFromJson(it.op) } }
+            is Message.DocOp -> {
+                path(m.path); id(m.opId)
+                check(m.baseRevision >= 0, "Invalid revision")
+                opFromJson(m.op)
+            }
+            is Message.RemoteOp -> { path(m.path); id(m.opId); opFromJson(m.op) }
+            is Message.OpAck -> { path(m.path); id(m.opId) }
+            is Message.OpRejected -> { path(m.path); id(m.opId) }
+            is Message.DocumentSaved -> path(m.path)
+            is Message.DocumentUnavailable -> path(m.path)
+            is Message.Presence -> {
+                m.path?.let(::path)
+                check(m.caret >= 0, "Invalid caret")
+                check(m.selections.size <= MAX_SELECTIONS, "Too many selections")
+                check(m.selections.all { it.start in 0..it.end }, "Invalid selection")
+            }
+            is Message.PresenceBroadcast -> {
+                m.path?.let(::path)
+                check(m.selections.size <= MAX_SELECTIONS, "Too many selections")
+            }
+            else -> Unit
+        }
+    }
+
+    private fun mutation(mu: FileMutation) {
+        path(mu.path)
+        when (mu.kind) {
+            FileOpKind.RENAME -> path(mu.newPath ?: throw ProtocolException("Rename without destination"))
+            FileOpKind.CREATE_FILE, FileOpKind.WRITE -> {
+                val content = mu.contentBase64 ?: throw ProtocolException("Missing content")
+                check(content.length <= MAX_FRAME_CHARS, "Content too large")
+            }
+            else -> Unit
+        }
+    }
+
+    private fun id(value: String) =
+        check(value.isNotEmpty() && value.length <= MAX_ID && value.none { it.isISOControl() }, "Invalid identifier")
+
+    private fun path(value: String) {
+        if (SafePath.normalizeOrNull(value) != value) throw ProtocolException("Invalid or unsafe path")
+    }
+
+    private fun check(condition: Boolean, message: String) {
+        if (!condition) throw ProtocolException(message)
+    }
+}

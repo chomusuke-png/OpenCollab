@@ -26,12 +26,12 @@ closes the connection.
 
 | Group | Messages |
 |---|---|
-| Handshake | `hello` (protocol version, display name, invitation token, optional resume key) → `welcome` (participant id, role, resume key, participants, sharing rules, file event sequence) or `rejected` |
+| Handshake | `hello` (protocol version, display name, invitation token, optional resume key) → `welcome` (participant id, role, resume key, participants, sharing rules, file event sequence, session age) or `rejected` |
 | Membership | `participantJoined`, `participantLeft`, `roleChanged`, `setRole` (host only), `sessionEnded` |
 | Files | `requestManifest` → `manifest`; `requestFiles` → `fileChunk`* + `filesDone`; `fileRequest` → `result`; `fileEvent` (host broadcast, sequenced); `resumeFiles` → replayed `fileEvent`s + `result`, or `filesResyncRequired` |
 | Documents | `openDoc` → `docState`; `op` → `ack` (+ `remoteOp` to other subscribers) or `opRejected`; `resumeDoc` → `docCatchUp` or `docState`; `docUnavailable`; `docSaved`; `closeDoc` |
 | Presence | `presence` (sender) → `presenceBroadcast` (host stamps the sender id) |
-| Liveness | `ping`/`pong` (WebSocket pings are also used) |
+| Liveness | `ping`/`pong` (either direction; WebSocket pings are also used); `latencies` (host broadcast every 2 s: each participant's round-trip time to the host in ms, measured with host pings) |
 
 ## Document synchronisation (host-authoritative OT)
 

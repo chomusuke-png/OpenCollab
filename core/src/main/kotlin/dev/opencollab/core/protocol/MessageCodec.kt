@@ -34,6 +34,7 @@ object MessageCodec {
     const val MAX_OP_COMPONENTS = 100_000
     const val MAX_SELECTIONS = 64
     const val MAX_PATHS_PER_REQUEST = 20_000
+    const val MAX_LATENCY_ENTRIES = 256
 
     private val json = Json {
         classDiscriminator = "t"
@@ -138,6 +139,11 @@ object MessageCodec {
                 m.path?.let(::path)
                 check(m.selections.size <= MAX_SELECTIONS, "Too many selections")
             }
+            is Message.Latencies -> {
+                check(m.millis.size <= MAX_LATENCY_ENTRIES, "Too many latency entries")
+                m.millis.forEach { (participant, millis) -> id(participant); check(millis >= 0, "Invalid latency") }
+            }
+            is Message.Welcome -> check(m.sessionAgeMillis >= 0, "Invalid session age")
             else -> Unit
         }
     }

@@ -50,6 +50,8 @@ data class HostConfig(
     val fileEventLogSize: Int = 5_000,
     val presencePerSecond: Int = 40,
     val messagesPerSecond: Int = 2_000,
+    /** How often the host pings participants and broadcasts their round-trip times; 0 disables. */
+    val pingIntervalMillis: Long = 2_000,
 )
 
 fun randomToken(bytes: Int = 24): String {
@@ -85,6 +87,10 @@ class HostSession(
         val messageLimiter = RateLimiter(config.messagesPerSecond, scheduler)
         var handshakeTimer: Cancellable? = null
         var open = true
+        /** Nonce of the unanswered ping, if any, and when it was sent. */
+        var pingNonce: Long? = null
+        var pingSentAt = 0L
+        var rttMillis: Int? = null
         val role: Role get() = info?.role ?: Role.VIEWER
         val id: String get() = info?.id ?: "?"
 
@@ -101,9 +107,15 @@ class HostSession(
     private val fileLog = ArrayDeque<Message.FileEvent>()
     private var fileSeq = 0L
     private var nextColor = 0
+    private var nextPingNonce = 1L
     private var closed = false
+    private val startedAt = scheduler.nowMillis()
 
     val endpointsInfo = mutableListOf<String>()
+
+    init {
+        schedulePingRound()
+    }
 
     // ---- Public API (thread-safe; work is posted to the session thread) --------------
 
@@ -243,6 +255,7 @@ class HostSession(
                 participants = participants(),
                 fileEventSeq = fileSeq,
                 sharing = files.rules.toConfig(),
+                sessionAgeMillis = (scheduler.nowMillis() - startedAt).coerceAtLeast(0),
             ),
         )
         broadcast(Message.ParticipantJoined(info), except = peer)
@@ -260,6 +273,10 @@ class HostSession(
         when (m) {
             is Message.Hello -> peer.send(Message.Error("protocol", "Already authenticated"))
             is Message.Ping -> peer.send(Message.Pong(m.nonce))
+            is Message.Pong -> if (m.nonce == peer.pingNonce) {
+                peer.pingNonce = null
+                peer.rttMillis = (scheduler.nowMillis() - peer.pingSentAt).coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
+            }
             is Message.SetRole -> {
                 requireRole(peer, Role.HOST)
                 applyRole(m.participantId, m.role)
@@ -567,6 +584,37 @@ class HostSession(
         val broadcast = Message.PresenceBroadcast(peer.id, m.path, m.caret, m.selections)
         peer.presence = broadcast
         broadcast(broadcast, except = peer)
+    }
+
+    // ---- Latency -----------------------------------------------------------------------
+
+    private fun schedulePingRound() {
+        if (config.pingIntervalMillis <= 0) return
+        scheduler.schedule(config.pingIntervalMillis) { exec.execute { pingRound() } }
+    }
+
+    /**
+     * Pings every participant and broadcasts the round-trip times measured so far. A ping still
+     * unanswered from the previous round counts as at least its age, so a stalled peer's
+     * latency keeps rising instead of freezing at its last good value.
+     */
+    private fun pingRound() {
+        if (closed) return
+        val now = scheduler.nowMillis()
+        for (peer in peers.values) {
+            if (peer.info == null || !peer.open) continue
+            if (peer.pingNonce != null) {
+                val waited = (now - peer.pingSentAt).coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
+                peer.rttMillis = maxOf(peer.rttMillis ?: 0, waited)
+            }
+            val nonce = nextPingNonce++
+            peer.pingNonce = nonce
+            peer.pingSentAt = now
+            peer.send(Message.Ping(nonce))
+        }
+        val latencies = peers.values.mapNotNull { peer -> peer.info?.let { info -> peer.rttMillis?.let { info.id to it } } }.toMap()
+        if (latencies.isNotEmpty()) broadcast(Message.Latencies(latencies))
+        schedulePingRound()
     }
 
     // ---- Connection lifecycle ----------------------------------------------------------

@@ -45,6 +45,9 @@ interface ClientHandler {
     fun onPresence(presence: Message.PresenceBroadcast) {}
     fun onParticipantLeft(participantId: String) {}
 
+    /** Each participant's round-trip time to the host in ms, refreshed every few seconds (I/O thread). */
+    fun onLatencies(millis: Map<String, Int>) {}
+
     /** Mirror files changed on disk (I/O thread). [initial] is true for the join snapshot. */
     fun onFilesChanged(paths: Collection<String>, initial: Boolean) {}
     fun onFileRequestFailed(mutation: FileMutation, error: String) {}
@@ -279,6 +282,8 @@ class CollabClient(
             }
             is Message.Error -> handler.onLog("Host: ${m.message}")
             is Message.Pong -> Unit
+            is Message.Ping -> send(Message.Pong(m.nonce))
+            is Message.Latencies -> handler.onLatencies(m.millis)
 
             is Message.Manifest -> onManifest(m)
             is Message.FileChunk -> onFileChunk(m)

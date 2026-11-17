@@ -4,8 +4,11 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 
-/** v2: streamed file transfer with chunk acknowledgements and content-less large file events. */
-const val PROTOCOL_VERSION = 2
+/**
+ * v2: streamed file transfer with chunk acknowledgements and content-less large file events.
+ * v3: the host pings participants and broadcasts their round-trip times; Welcome carries the session age.
+ */
+const val PROTOCOL_VERSION = 3
 
 @Serializable
 enum class Role {
@@ -86,6 +89,8 @@ sealed class Message {
         val participants: List<ParticipantInfo>,
         val fileEventSeq: Long,
         val sharing: SharingConfig,
+        /** How long the session has been running, so every participant shows the same timer. */
+        val sessionAgeMillis: Long = 0,
     ) : Message()
 
     @Serializable @SerialName("rejected")
@@ -219,9 +224,14 @@ sealed class Message {
         val selections: List<TextRange>,
     ) : Message()
 
+    /** Either side may ping; the other answers with a [Pong] carrying the same nonce. */
     @Serializable @SerialName("ping")
     data class Ping(val nonce: Long) : Message()
 
     @Serializable @SerialName("pong")
     data class Pong(val nonce: Long) : Message()
+
+    /** Host → participants: each participant's round-trip time to the host, in milliseconds. */
+    @Serializable @SerialName("latencies")
+    data class Latencies(val millis: Map<String, Int>) : Message()
 }

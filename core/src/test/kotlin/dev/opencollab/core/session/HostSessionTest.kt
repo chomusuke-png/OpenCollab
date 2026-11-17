@@ -42,6 +42,22 @@ class HostSessionTest {
     }
 
     @Test
+    fun `host measures every participant's ping and reports the session age`() {
+        sampleProject()
+        Harness(host, config = HostConfig("demo", pingIntervalMillis = 50)).use { h ->
+            Thread.sleep(300) // the session has been running a while before the guest joins
+            val g = h.guest("alice", guestDir("alice"))
+            awaitState(g, ClientState.CONNECTED)
+            assertTrue(g.welcome!!.sessionAgeMillis >= 300, "session age ${g.welcome!!.sessionAgeMillis}")
+            val alice = g.client.participantId
+            val hostId = h.hostIde.client.participantId
+            // Everyone, host included, receives every participant's round-trip time.
+            eventually { alice in g.latencies && hostId in g.latencies && alice in h.hostIde.latencies }
+            assertTrue(g.latencies.values.all { it in 0..5_000 }, "latencies ${g.latencies}")
+        }
+    }
+
+    @Test
     fun `snapshot shares project files but never secrets or local state`() {
         sampleProject()
         Harness(host).use { h ->

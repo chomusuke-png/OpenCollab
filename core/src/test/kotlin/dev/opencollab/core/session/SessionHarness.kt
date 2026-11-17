@@ -28,7 +28,12 @@ class FakeIde(name: String) : ClientHandler {
     val unavailable = CopyOnWriteArrayList<String>()
     val failedFileRequests = CopyOnWriteArrayList<Pair<FileMutation, String>>()
     val filesChanged = CopyOnWriteArrayList<String>()
+    @Volatile var latencies: Map<String, Int> = emptyMap()
+    @Volatile var welcome: Message.Welcome? = null
     lateinit var client: CollabClient
+
+    override fun onWelcome(welcome: Message.Welcome) { this.welcome = welcome }
+    override fun onLatencies(millis: Map<String, Int>) { latencies = millis }
 
     override fun onStateChanged(state: ClientState, detail: String) { states += state; stateDetails += detail }
     override fun applyRemoteEdit(path: String, op: TextOperation) { texts[path] = op.apply(texts.getValue(path)) }

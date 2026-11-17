@@ -20,6 +20,7 @@ import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.wm.ToolWindowManager
 import dev.opencollab.core.files.ProjectDirMacro
 import dev.opencollab.core.protocol.ChatEntry
+import dev.opencollab.core.protocol.ConsoleKind
 import dev.opencollab.core.protocol.ConsoleStream
 import dev.opencollab.core.protocol.Message
 import dev.opencollab.core.protocol.RunTarget
@@ -87,7 +88,7 @@ class CollabSessionService(private val project: Project) : Disposable {
     private val listeners = CopyOnWriteArrayList<Listener>()
     private val logLines = CopyOnWriteArrayList<String>()
     /** A console of the host as a guest sees it: output kept in order, with this guest's paths. */
-    class SharedConsole(val id: String, val title: String, val requestedBy: String?) {
+    class SharedConsole(val id: String, val title: String, val requestedBy: String?, val kind: ConsoleKind = ConsoleKind.RUN) {
         /** Guarded by itself. */
         val parts = ArrayList<Pair<ConsoleStream, String>>()
         internal var chars = 0
@@ -108,6 +109,7 @@ class CollabSessionService(private val project: Project) : Disposable {
     private val consoles = LinkedHashMap<String, SharedConsole>() // guarded by itself
     private val consoleListeners = CopyOnWriteArrayList<ConsoleListener>()
     @Volatile private var projectDir: ProjectDirMacro? = null
+    private var guestRuns: GuestRunMirror? = null
     /** What the host lets guests ask to run (empty while hosting or idle). */
     @Volatile var runTargets: List<RunTarget> = emptyList()
         private set
@@ -294,7 +296,7 @@ class CollabSessionService(private val project: Project) : Disposable {
         }
         override fun onConsoleStarted(started: Message.ConsoleStarted) {
             if (mode !is Mode.Joined) return
-            val console = SharedConsole(started.consoleId, started.title, started.requestedBy)
+            val console = SharedConsole(started.consoleId, started.title, started.requestedBy, started.kind)
             val dropped = synchronized(consoles) {
                 consoles[console.id] = console
                 generateSequence { if (consoles.size > MAX_CONSOLES) consoles.remove(consoles.keys.first()) else null }.toList()
@@ -559,6 +561,8 @@ class CollabSessionService(private val project: Project) : Disposable {
         bridge.install()
         clearConsoles()
         projectDir = ProjectDirMacro(root)
+        // The host's runs and builds show in this IDE's Run and Build tool windows.
+        guestRuns = GuestRunMirror(project, this).also { addConsoleListener(it, it) }
         chatEntries.clear()
         unreadChat = 0
         mode = Mode.Joined(client, bridge, invite.project)
@@ -666,6 +670,8 @@ class CollabSessionService(private val project: Project) : Disposable {
                 appendLog(message("log.session.ended"))
             }
             is Mode.Joined -> {
+                guestRuns?.let(Disposer::dispose)
+                guestRuns = null
                 m.client.close()
                 Disposer.dispose(m.bridge)
                 appendLog(message("log.left"))

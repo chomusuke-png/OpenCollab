@@ -31,6 +31,7 @@ import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import dev.opencollab.core.protocol.ParticipantInfo
 import dev.opencollab.core.protocol.Role
+import dev.opencollab.core.protocol.RunTargetKind
 import dev.opencollab.plugin.OpenCollabBundle.message
 import dev.opencollab.plugin.bridge.PresenceRenderer
 import dev.opencollab.plugin.session.CollabSessionService
@@ -70,7 +71,6 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
     }
     internal val bottomTabs = JBTabbedPane() // internal: checked by CollabPanelTest
     private val chatPanel = ChatPanel(service)
-    private val consolePanel = SharedConsolePanel(project, service, parent)
 
     // ---- Welcome (no session) ----------------------------------------------------------
     private val lastStatus = JBLabel().apply { foreground = UIUtil.getContextHelpForeground() }
@@ -101,6 +101,10 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         horizontalTextPosition = SwingConstants.LEADING
     }
     private val leaveButton = JButton(message("panel.leave"), AllIcons.Actions.Suspend)
+    /** Guests: ask the host to run one of its run configurations or build (output shows in Run / Build). */
+    private val runOnHostButton = JButton(message("console.run.on.host"), AllIcons.General.ArrowDown).apply {
+        horizontalTextPosition = SwingConstants.LEADING
+    }
     private val settingsButton = JButton(AllIcons.General.Settings).apply { toolTipText = message("panel.settings.tooltip") }
     private val endpoints = JBLabel().apply { foreground = UIUtil.getContextHelpForeground() }
     private val detailsLink = ActionLink(message("panel.connection.details")) { toggleDetails() }
@@ -127,13 +131,12 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
             add(JBScrollPane(logArea), BorderLayout.CENTER)
         }
         bottomTabs.addTab(message("panel.chat.title"), chatPanel)
-        bottomTabs.addTab(message("panel.console.title"), consolePanel)
         bottomTabs.addTab(message("panel.activity.title"), activity)
         bottomTabs.addChangeListener { chatPanel.selected = bottomTabs.selectedComponent === chatPanel }
 
         idleView.add(welcome, BorderLayout.NORTH)
 
-        val buttons = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply { add(inviteButton); add(leaveButton); add(settingsButton) }
+        val buttons = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply { add(inviteButton); add(runOnHostButton); add(leaveButton); add(settingsButton) }
         val header = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             add(row(status)); add(row(sessionTime)); add(row(buttons)); add(row(detailsLink)); add(row(endpoints))
@@ -153,6 +156,7 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         sessionView.add(splitter, BorderLayout.CENTER)
 
         inviteButton.addActionListener { showInviteMenu() }
+        runOnHostButton.addActionListener { showRunTargets() }
         leaveButton.addActionListener {
             val hosting = service.mode is Mode.Hosting
             val ok = !hosting || Messages.showYesNoDialog(project, message("panel.end.confirm"), "OpenCollab", null) == Messages.YES
@@ -203,6 +207,19 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
     }
 
     // ---- Invitations and connection details ---------------------------------------------
+
+    private fun showRunTargets() {
+        val targets = service.runTargets
+        if (targets.isEmpty()) return
+        val menu = JPopupMenu()
+        for (target in targets) {
+            val icon = if (target.kind == RunTargetKind.BUILD) AllIcons.Actions.Compile else AllIcons.Actions.Execute
+            menu.add(JMenuItem(target.name, icon).apply {
+                addActionListener { if (service.requestRun(target)) CollabUi.toast(runOnHostButton, message("console.request.sent", target.name)) }
+            })
+        }
+        menu.show(runOnHostButton, 0, runOnHostButton.height)
+    }
 
     private fun showInviteMenu() {
         val hosting = service.mode as? Mode.Hosting ?: return
@@ -346,6 +363,10 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
 
         val hosting = mode as? Mode.Hosting
         inviteButton.isVisible = hosting != null
+        val guestEditor = mode is Mode.Joined && service.myRole?.canEdit == true
+        runOnHostButton.isVisible = mode is Mode.Joined
+        runOnHostButton.isEnabled = guestEditor && service.runTargets.isNotEmpty()
+        runOnHostButton.toolTipText = if (mode is Mode.Joined && !guestEditor) message("console.viewer") else null
         leaveButton.isEnabled = mode is Mode.Hosting || mode is Mode.Joined
         leaveButton.text = message(if (hosting != null) "panel.end.session" else "panel.leave")
         detailsLink.isVisible = hosting != null
@@ -364,7 +385,6 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         val unread = service.unreadChat
         bottomTabs.setTitleAt(0, if (unread > 0) message("panel.chat.unread", unread) else message("panel.chat.title"))
         chatPanel.refresh(inSession = mode is Mode.Hosting || mode is Mode.Joined)
-        consolePanel.refresh()
         // Ping updates refresh the panel every 2 s; leave the log (and where it is scrolled) alone unless it changed.
         val log = service.log().joinToString("\n")
         if (logArea.text != log) {

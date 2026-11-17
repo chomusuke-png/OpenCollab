@@ -111,11 +111,13 @@ OpenCollab mirror, so it can never overwrite your own data.
   Session*.
 * **Shared console:** while hosting, everything the host runs from the IDE (run configurations,
   tests, Gradle tasks) and every build (compiler and Gradle output, errors with their location)
-  is shown live to guests in the **Console** tab. Paths in the project become links that open the
+  is shown live to guests in their own IntelliJ windows: runs as tabs in the **Run** tool
+  window, builds in the **Build** tool window with errors as entries. Paths in the project become
+  links that open the
   file in the guest's copy, and the host's own folder is never shown (it appears as
   `$PROJECT_DIR$` before being mapped). The host can turn this off in *Settings | Tools |
   OpenCollab | Run and Build*.
-* **Run on host:** an editor clicks **Run on host ▶** in the Console tab and picks one of the
+* **Run on host:** an editor clicks **Run on host ▾** in the OpenCollab panel and picks one of the
   host's run configurations or *Build project*. The host gets a notification — *Allow*, *Allow
   for this session*, or *Deny* — and nothing runs without that answer; unanswered requests expire
   after two minutes. Everything runs on the host's machine, so the project stays in one place

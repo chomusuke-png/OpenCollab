@@ -33,6 +33,7 @@ import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.task.ProjectTaskManager
 import com.intellij.util.concurrency.AppExecutorUtil
+import dev.opencollab.core.protocol.ConsoleKind
 import dev.opencollab.core.protocol.ConsoleStream
 import dev.opencollab.core.files.ProjectDirMacro
 import dev.opencollab.core.protocol.RunTarget
@@ -184,7 +185,7 @@ class HostConsoleSharing(
             is StartBuildEvent -> {
                 val id = "b${ids.incrementAndGet()}"
                 builds[buildId] = id
-                session.consoleStarted(id, event.buildDescriptor.title.ifBlank { event.message })
+                session.consoleStarted(id, event.buildDescriptor.title.ifBlank { event.message }, kind = ConsoleKind.BUILD)
             }
             is OutputBuildEvent -> builds[buildId]?.let { append(it, streamOf(event.outputType), event.message) }
             is FileMessageEvent -> builds[buildId]?.let { id ->

@@ -120,11 +120,31 @@ OpenCollab mirror, so it can never overwrite your own data.
   file in the guest's copy, and the host's own folder is never shown (it appears as
   `$PROJECT_DIR$` before being mapped). The host can turn this off in *Settings | Tools |
   OpenCollab | Run and Build*.
+* **Tests:** the host's test runs (JUnit, TestNG, Gradle, …) appear on guests as IntelliJ's test
+  tree, with passed, failed and ignored tests, failure messages and stack traces;
+  double-clicking a test opens it in the guest's copy.
 * **Run on host:** an editor clicks **Run on host ▾** in the OpenCollab panel and picks one of the
   host's run configurations or *Build project*. The host gets a notification — *Allow*, *Allow
   for this session*, or *Deny* — and nothing runs without that answer; unanswered requests expire
   after two minutes. Everything runs on the host's machine, so the project stays in one place
   and in sync. Viewers can watch but not ask.
+* **Command on host:** in the same menu, *Command on host…* asks the host to run a terminal
+  command (for example `./gradlew test` or `git status`) in its project folder. The host sees
+  the exact command and must allow each one (there is no "allow for this session" for
+  commands); it then runs in a Run tab on the host, which the host can stop, and its output is
+  shared like any run. The host can turn this off in *Settings | Tools | OpenCollab*.
+* **Debugger:** when the host's debugger stops, guests get a notification and the line is
+  highlighted in their editor. The **Host** tab at the bottom of the tool window shows the
+  frames (double-click to open) and the variables of the selected frame. Breakpoints are shared:
+  editors can add and remove line breakpoints in shared files and they appear on the host (and
+  the host's appear on everyone). Guests never step or resume: the host keeps control.
+* **Git:** the **Host** tab also shows the host's branch and changed files (double-click to open).
+  Commits, branches and pushes stay with the host.
+* **Code style:** guests format with the host's code style (also when the host uses an IDE-level
+  scheme), so *Reformat Code* gives the same result for everyone. `.editorconfig` and
+  `.idea/codeStyles` are shared as project files too.
+* The host can stop sharing the debugger, breakpoints, Git status and code style in *Settings |
+  Tools | OpenCollab*; guests on older versions simply do not get these.
 * **Status bar:** while in a session the IDE status bar shows the status (green connected, amber
   connecting, red disconnected), the number of people, the session time and unread chat
   messages; click it to open the tool window.

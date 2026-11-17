@@ -188,6 +188,24 @@ class CollabSessionService(private val project: Project) : Disposable {
 
     fun chat(): List<ChatEntry> = chatEntries.toList()
 
+    /** Who is typing a chat message: participant id → when that expires unless refreshed. */
+    private val typing = ConcurrentHashMap<String, Long>()
+
+    /** Names of the other participants typing right now, in list order. */
+    fun typingNames(): List<String> {
+        val now = System.currentTimeMillis()
+        return participants.filter { p -> (typing[p.id] ?: 0) > now && p.id != ownParticipantId() }.map { it.displayName }
+    }
+
+    /** Tells the others whether we are typing in the chat (the chat panel refreshes it while typing). */
+    fun setChatTyping(isTyping: Boolean) {
+        when (val m = mode) {
+            is Mode.Hosting -> m.bridge.client.setChatTyping(isTyping)
+            is Mode.Joined -> m.client.setChatTyping(isTyping)
+            else -> Unit
+        }
+    }
+
     /** Sends a chat message to the session; false if it could not be sent (not connected, empty, too long). */
     fun sendChat(text: String): Boolean = when (val m = mode) {
         is Mode.Hosting -> m.bridge.client.sendChat(text)
@@ -261,8 +279,13 @@ class CollabSessionService(private val project: Project) : Disposable {
             latencies = millis
             fire()
         }
+        override fun onChatTyping(participantId: String, isTyping: Boolean) {
+            if (isTyping) typing[participantId] = System.currentTimeMillis() + TYPING_EXPIRES_MS else typing.remove(participantId)
+            fire()
+        }
         override fun onChat(entry: ChatEntry) {
             if (mode == Mode.Idle) return
+            typing.remove(entry.participantId)
             chatEntries += entry
             while (chatEntries.size > MAX_CHAT_KEPT) chatEntries.removeAt(0)
             if (!chatOnScreen && entry.participantId != ownParticipantId()) unreadChat++
@@ -656,6 +679,7 @@ class CollabSessionService(private val project: Project) : Disposable {
         sessionStartedAt = null
         latencies = emptyMap()
         following = null
+        typing.clear()
         runTargets = emptyList()
         runRequests.clear()
         status = finalStatus ?: message("status.idle")
@@ -677,6 +701,8 @@ class CollabSessionService(private val project: Project) : Disposable {
 
     companion object {
         private const val MAX_CHAT_KEPT = 500
+        /** "Is typing" disappears this long after the last refresh (senders refresh every 2 s). */
+        private const val TYPING_EXPIRES_MS = 5_000L
         /** Consoles a guest keeps, and characters of each (beyond that, output is not stored). */
         private const val MAX_CONSOLES = 5
         private const val MAX_CONSOLE_CHARS = 2_000_000

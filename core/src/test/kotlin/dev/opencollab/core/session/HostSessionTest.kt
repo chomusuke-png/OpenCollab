@@ -173,6 +173,23 @@ class HostSessionTest {
     }
 
     @Test
+    fun `typing is relayed to the others with the host's sender id and cleared by the message`() {
+        sampleProject()
+        Harness(host).use { h ->
+            val alice = h.guest("alice", guestDir("alice"))
+            val bob = h.guest("bob", guestDir("bob"))
+            awaitState(alice, ClientState.CONNECTED)
+            awaitState(bob, ClientState.CONNECTED)
+            alice.client.setChatTyping(true)
+            val id = alice.client.participantId
+            eventually { bob.typing[id] == true && h.hostIde.typing[id] == true }
+            assertFalse(alice.typing.containsKey(id), "the typist is not told about themselves")
+            alice.client.sendChat("done")
+            eventually { bob.typing[id] == false }
+        }
+    }
+
+    @Test
     fun `chat floods are rate limited by the host`() {
         sampleProject()
         Harness(host).use { h ->

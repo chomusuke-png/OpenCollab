@@ -125,7 +125,8 @@ OpenCollab mirror, so it can never overwrite your own data.
   messages; click it to open the tool window.
 * **Chat:** the **Chat** tab at the bottom of the tool window talks to everyone in the session,
   viewers included; press Enter to send. The host stamps who sent each message, keeps the last
-  200 and shows them to anyone who joins later. Unread messages are counted on the tab, and a
+  200 and shows them to anyone who joins later. While someone writes, the others see
+  “Name is typing…” above the input. Unread messages are counted on the tab, and a
   notification pops up while the tool window is hidden. The **Activity** tab next to it has the
   session log. Participants' round-trip time to the host (ms) is shown next to their role, and
   the session time under the status.

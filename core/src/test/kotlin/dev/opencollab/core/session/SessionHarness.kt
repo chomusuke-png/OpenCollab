@@ -39,6 +39,9 @@ class FakeIde(name: String) : ClientHandler {
     val chat = CopyOnWriteArrayList<ChatEntry>()
     override fun onChat(entry: ChatEntry) { chat += entry }
     override fun onChatHistory(entries: List<ChatEntry>) { chat.clear(); chat.addAll(entries) }
+    /** Who this participant was told is typing. */
+    val typing = ConcurrentHashMap<String, Boolean>()
+    override fun onChatTyping(participantId: String, typing: Boolean) { this.typing[participantId] = typing }
     /** Shared console text and exit codes by console id, run targets, answers to run requests. */
     val consoles = ConcurrentHashMap<String, StringBuffer>()
     val consoleTitles = ConcurrentHashMap<String, String>()

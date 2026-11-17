@@ -70,6 +70,7 @@ interface BridgeListener {
     fun onLatencies(millis: Map<String, Int>) {}
     fun onChat(entry: ChatEntry) {}
     fun onChatHistory(entries: List<ChatEntry>) {}
+    fun onChatTyping(participantId: String, typing: Boolean) {}
     /** Started following [participantId], or stopped (null). EDT. */
     fun onFollowingChanged(participantId: String?) {}
     fun onConsoleStarted(started: Message.ConsoleStarted) {}
@@ -193,6 +194,7 @@ class IdeBridge(
 
     override fun onLatencies(millis: Map<String, Int>) = listener.onLatencies(millis)
     override fun onChat(entry: ChatEntry) = listener.onChat(entry)
+    override fun onChatTyping(participantId: String, typing: Boolean) = listener.onChatTyping(participantId, typing)
     override fun onChatHistory(entries: List<ChatEntry>) = listener.onChatHistory(entries)
     override fun onConsoleStarted(started: Message.ConsoleStarted) = listener.onConsoleStarted(started)
     override fun onConsoleOutput(output: Message.ConsoleOutput) = listener.onConsoleOutput(output)

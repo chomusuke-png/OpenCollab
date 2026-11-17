@@ -50,6 +50,9 @@ interface ClientHandler {
     /** Each participant's round-trip time to the host in ms, refreshed every few seconds (I/O thread). */
     fun onLatencies(millis: Map<String, Int>) {}
 
+    /** Another participant started or stopped typing a chat message (I/O thread). */
+    fun onChatTyping(participantId: String, typing: Boolean) {}
+
     /** A new chat message, including our own once the host relays it (I/O thread). */
     fun onChat(entry: ChatEntry) {}
 
@@ -212,6 +215,11 @@ class CollabClient(
 
     fun setRole(participantId: String, role: Role) = send(Message.SetRole(participantId, role))
 
+    /** Tells the others whether we are typing a chat message; call again every few seconds while typing. */
+    fun setChatTyping(typing: Boolean) {
+        send(Message.ChatTyping(typing))
+    }
+
     /**
      * Asks the host to run [targetId] (from [ClientHandler.onRunTargets]); the answer arrives
      * through [ClientHandler.onRunResponse] with the returned request id. Null if not connected.
@@ -350,6 +358,7 @@ class CollabClient(
             is Message.Ping -> send(Message.Pong(m.nonce))
             is Message.Latencies -> handler.onLatencies(m.millis)
             is Message.Chat -> handler.onChat(m.entry)
+            is Message.ChatTypingBroadcast -> handler.onChatTyping(m.participantId, m.typing)
             is Message.ChatHistory -> handler.onChatHistory(m.entries)
             is Message.ConsoleStarted -> handler.onConsoleStarted(m)
             is Message.ConsoleOutput -> handler.onConsoleOutput(m)

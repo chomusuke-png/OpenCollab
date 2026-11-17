@@ -271,6 +271,14 @@ sealed class Message {
     @Serializable @SerialName("chat")
     data class Chat(val entry: ChatEntry) : Message()
 
+    /** Participant → host: started or stopped typing a chat message (refreshed every few seconds while typing). */
+    @Serializable @SerialName("chatTyping")
+    data class ChatTyping(val typing: Boolean) : Message()
+
+    /** Host → everyone else: [participantId] is (or is no longer) typing. Receivers let it expire on their own. */
+    @Serializable @SerialName("chatTypingBroadcast")
+    data class ChatTypingBroadcast(val participantId: String, val typing: Boolean) : Message()
+
     /** Host → a participant after (re)joining: the most recent messages, oldest first. Replaces any local copy. */
     @Serializable @SerialName("chatHistory")
     data class ChatHistory(val entries: List<ChatEntry>) : Message()

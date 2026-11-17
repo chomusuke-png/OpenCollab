@@ -86,6 +86,9 @@ data class HostConfig(
     val consoleReplayChars: Int = 256 * 1024,
 )
 
+/** "Is typing" updates relayed per participant per second (clients send far fewer). */
+private const val TYPING_PER_SECOND = 5
+
 fun randomToken(bytes: Int = 24): String {
     val b = ByteArray(bytes)
     SecureRandom().nextBytes(b)
@@ -120,6 +123,7 @@ class HostSession(
         val presenceLimiter = RateLimiter(config.presencePerSecond, scheduler)
         val messageLimiter = RateLimiter(config.messagesPerSecond, scheduler)
         val chatLimiter = RateLimiter(config.chatPerSecond, scheduler)
+        val typingLimiter = RateLimiter(TYPING_PER_SECOND, scheduler)
         val runLimiter = RateLimiter(config.runRequestsPerSecond, scheduler)
         var handshakeTimer: Cancellable? = null
         var open = true
@@ -358,6 +362,7 @@ class HostSession(
             }
             is Message.Presence -> presence(peer, m)
             is Message.ChatSend -> chat(peer, m)
+            is Message.ChatTyping -> if (peer.typingLimiter.tryAcquire()) broadcast(Message.ChatTypingBroadcast(peer.id, m.typing), except = peer)
             is Message.RunRequest -> runRequest(peer, m)
             else -> peer.send(Message.Error("protocol", "Unexpected message ${m::class.simpleName}"))
         }
@@ -670,6 +675,7 @@ class HostSession(
             return
         }
         val entry = ChatEntry(nextChatId++, info.id, info.displayName, info.colorIndex, m.text.trimEnd(), wallClock())
+        broadcast(Message.ChatTypingBroadcast(info.id, false), except = peer) // the message is out: no longer typing
         chatLog.addLast(entry)
         while (chatLog.size > config.chatHistorySize) chatLog.removeFirst()
         broadcast(Message.Chat(entry))

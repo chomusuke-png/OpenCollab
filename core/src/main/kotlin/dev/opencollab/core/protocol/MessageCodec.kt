@@ -151,6 +151,7 @@ object MessageCodec {
             }
             is Message.Welcome -> check(m.sessionAgeMillis >= 0, "Invalid session age")
             is Message.ChatSend -> chatText(m.text)
+            is Message.ChatTypingBroadcast -> id(m.participantId)
             is Message.Chat -> chatEntry(m.entry)
             is Message.ChatHistory -> {
                 check(m.entries.size <= MAX_CHAT_HISTORY, "Chat history too long")

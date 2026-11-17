@@ -106,13 +106,19 @@ class Harness(val hostRoot: Path, rules: SharingRules = SharingRules(), config: 
         awaitState(hostIde, ClientState.CONNECTED)
     }
 
-    fun guest(name: String, mirrorRoot: Path, token: String = session.config.editorToken, connector: Connector? = null): FakeIde {
+    fun guest(
+        name: String,
+        mirrorRoot: Path,
+        token: String = session.config.editorToken,
+        connector: Connector? = null,
+        presenceIntervalMillis: Long = 20,
+    ): FakeIde {
         val ide = FakeIde(name)
         val conn = connector ?: server.connector(name) { links += it }
         ide.client = CollabClient(
             conn, name, token, ide, ide.edt, scheduler, MirrorWorkspace(mirrorRoot),
             ReconnectPolicy(initialDelayMillis = 100, maxDelayMillis = 400, maxAttempts = 20),
-            presenceIntervalMillis = 20,
+            presenceIntervalMillis = presenceIntervalMillis,
         )
         clients += ide.client
         ide.client.start()

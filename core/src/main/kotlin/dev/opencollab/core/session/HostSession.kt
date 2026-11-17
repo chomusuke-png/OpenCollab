@@ -49,7 +49,7 @@ data class HostConfig(
     val handshakeTimeoutMillis: Long = 15_000,
     val maxHistoryPerDocument: Int = 2_000,
     val fileEventLogSize: Int = 5_000,
-    /** Above the fastest presence interval a client may use (16 ms ≈ 62/s), so no final caret position is dropped. */
+    /** Presence relayed per participant per second; beyond it only the latest position is kept and relayed shortly after. */
     val presencePerSecond: Int = 120,
     val messagesPerSecond: Int = 2_000,
     /** How often the host pings participants and broadcasts their round-trip times; 0 disables. */
@@ -95,6 +95,9 @@ class HostSession(
         val chatLimiter = RateLimiter(config.chatPerSecond, scheduler)
         var handshakeTimer: Cancellable? = null
         var open = true
+        /** Latest position held back by the presence limit, and the timer that relays it. */
+        var pendingPresence: Message.Presence? = null
+        var presenceFlush: Cancellable? = null
         /** Nonce of the unanswered ping, if any, and when it was sent. */
         var pingNonce: Long? = null
         var pingSentAt = 0L
@@ -591,8 +594,25 @@ class HostSession(
     // ---- Presence ----------------------------------------------------------------------
 
     private fun presence(peer: Peer, m: Message.Presence) {
-        if (!peer.presenceLimiter.tryAcquire()) return
         if (m.path != null && !files.rules.isShared(m.path)) return
+        if (!peer.presenceLimiter.tryAcquire()) {
+            // Over the limit: keep only the latest position and relay it as soon as the limit
+            // allows, so a burst never leaves a stale caret behind.
+            peer.pendingPresence = m
+            if (peer.presenceFlush == null) {
+                val delay = (1000L / config.presencePerSecond).coerceAtLeast(1)
+                peer.presenceFlush = scheduler.schedule(delay) {
+                    exec.execute {
+                        peer.presenceFlush = null
+                        val pending = peer.pendingPresence ?: return@execute
+                        peer.pendingPresence = null
+                        if (peer.open && !closed) presence(peer, pending)
+                    }
+                }
+            }
+            return
+        }
+        peer.pendingPresence = null // superseded by this newer position
         val broadcast = Message.PresenceBroadcast(peer.id, m.path, m.caret, m.selections)
         peer.presence = broadcast
         broadcast(broadcast, except = peer)
@@ -654,6 +674,7 @@ class HostSession(
         if (!peer.open) return
         peer.open = false
         peer.handshakeTimer?.cancel()
+        peer.presenceFlush?.cancel()
         peer.transfers.values.forEach { it.cancel() }
         peers.remove(peer.connection)
         peer.connection.close(reason)

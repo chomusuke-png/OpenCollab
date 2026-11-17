@@ -83,7 +83,7 @@ class CollabClient(
     /** Guest file mirror; null for the host's own bridge (the host owns the real files). */
     val mirror: MirrorWorkspace?,
     private val reconnectPolicy: ReconnectPolicy? = ReconnectPolicy(),
-    presenceIntervalMillis: Long = 75,
+    presenceIntervalMillis: Long = 0,
 ) : AutoCloseable {
     private val inbound = SerialExecutor("opencollab-client")
     private val requestCounter = AtomicLong()

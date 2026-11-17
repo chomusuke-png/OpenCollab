@@ -42,8 +42,8 @@ class OpenCollabSettings : PersistentStateComponent<OpenCollabSettings.State> {
         var includes: String = ""
         var extraGuestReadOnly: String = ""
         var maxFileSizeMb: Int = 10
-        /** Minimum gap between cursor updates during continuous movement; 16 ms is one frame at 60 Hz. */
-        var presenceIntervalMs: Int = 16
+        /** Minimum gap between cursor updates during continuous movement; 0 = send every change at once. */
+        var presenceIntervalMs: Int = 0
     }
 
     private var state = State()

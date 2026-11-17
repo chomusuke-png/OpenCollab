@@ -37,7 +37,7 @@ La interfaz del plugin está en **inglés** y **español** y sigue el idioma del
 | Default invite role | Role suggested for new invitations |
 | Additional excludes / Explicit includes / Read-only for guests | Sharing rules, see below |
 | Max file size | Files above this are never shared (default 10 MB, up to 2048 MB). Files larger than 8 MB are streamed to guests in chunks with flow control; guests can create/upload files up to 8 MB; text files up to 8 MB are edited live |
-| Cursor update interval | Presence throttling (default 16 ms, one frame at 60 Hz) |
+| Cursor update interval | Minimum gap between cursor updates (default 0 ms: every change is sent at once) |
 
 ## Start a session (host)
 

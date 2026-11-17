@@ -85,6 +85,21 @@ class HostSessionTest {
     }
 
     @Test
+    fun `unthrottled cursor bursts above the host limit still deliver the final position`() {
+        sampleProject()
+        Harness(host).use { h ->
+            val alice = h.guest("alice", guestDir("alice"), presenceIntervalMillis = 0)
+            awaitState(alice, ClientState.CONNECTED)
+            // Far beyond the host's 120/s: most updates are coalesced, but never the last one.
+            repeat(500) { alice.client.updatePresence("src/Main.kt", it, emptyList()) }
+            val id = alice.client.participantId
+            eventually { h.hostIde.presence[id]?.caret == 499 }
+            Thread.sleep(200)
+            assertEquals(499, h.hostIde.presence[id]?.caret, "nothing older may arrive after the final position")
+        }
+    }
+
+    @Test
     fun `chat floods are rate limited by the host`() {
         sampleProject()
         Harness(host).use { h ->

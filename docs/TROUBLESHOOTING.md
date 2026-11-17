@@ -18,7 +18,7 @@ is in the IDE log (*Help | Show Log in Explorer/Finder*), lines containing `Open
 | Edits from a guest are reverted immediately | The guest is a viewer, or the file is read-only for guests (run configurations, wrapper scripts, CI files). The host can change the role (right-click > *Make Editor*) |
 | *Host refused write …: The host has unsaved changes* | A guest tried to replace a file (outside the editor) that the host is editing. Open the file in the editor instead |
 | A file is missing on the guest | It matches an exclude rule (secret, build output, local IDE file) or exceeds the size limit. The host can add an explicit include rule |
-| Remote carets are not shown | The other participant has no shared file focused; presence updates are throttled to 16 ms (one frame) by default |
+| Remote carets are not shown | The other participant has no shared file focused; presence updates are sent as soon as the caret moves (0 ms) by default |
 | *Reconnecting in Ns* | The network dropped. The guest keeps editing locally and merges after reconnecting; if the host's history no longer covers the gap, the document is rebased on a snapshot |
 | Gradle: `Could not resolve idea:idea:2026.2.3` | First build needs internet access to `cache-redirector.jetbrains.com` / `www.jetbrains.com` |
 | Gradle on Windows: path too long errors | Clone/build in a short path (e.g. `C:\src\OpenCollab`) |

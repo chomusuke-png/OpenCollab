@@ -10,7 +10,8 @@ import kotlin.random.Random
 
 /**
  * Simulates the host-authoritative engine with several clients, random interleavings,
- * random network delays and duplicated deliveries, then checks convergence.
+ * random network delays and duplicated deliveries, then checks convergence. Clients send every
+ * edit at once, so each may have many operations in flight.
  */
 class SyncEngineTest {
     private sealed interface ToServer { val client: Int }
@@ -24,8 +25,13 @@ class SyncEngineTest {
     }
 
     @RepeatedTest(200)
-    fun `random concurrent edits converge on all clients`() {
-        val rnd = Random(System.nanoTime())
+    fun `random concurrent edits converge on all clients`() = simulate(Random(System.nanoTime()), editWeight = 2, serverWeight = 1, clientWeight = 1)
+
+    /** Slow network: the host and clients rarely process messages, so many edits are in flight at once. */
+    @RepeatedTest(100)
+    fun `many operations in flight per client still converge`() = simulate(Random(System.nanoTime()), editWeight = 8, serverWeight = 1, clientWeight = 1)
+
+    private fun simulate(rnd: Random, editWeight: Int, serverWeight: Int, clientWeight: Int) {
         val initial = "fun main() {\n  println(\"hi\")\n}\n"
         val server = ServerDocument("Main.kt", initial, maxHistory = 10_000)
         val clients = (0 until rnd.nextInt(2, 5)).map {
@@ -48,22 +54,24 @@ class SyncEngineTest {
 
         fun clientStep(c: SimClient) {
             when (val m = c.inbox.removeFirst()) {
-                is Ack -> c.doc.acknowledge(m.opId, m.revision)?.let { toServer.addLast(Submit(c.id, it)) }
+                is Ack -> c.doc.acknowledge(m.opId, m.revision)
                 is Remote -> c.text = c.doc.applyServer(m.op, m.revision).apply(c.text)
             }
         }
 
+        val total = editWeight + serverWeight + clientWeight + 1
         repeat(300) {
             val c = clients[rnd.nextInt(clients.size)]
-            when (rnd.nextInt(5)) {
-                0, 1 -> {
+            val pick = rnd.nextInt(total)
+            when {
+                pick < editWeight -> {
                     val op = randomOp(rnd, c.text)
                     c.text = op.apply(c.text)
                     c.doc.applyLocal(op)?.let { val s = Submit(c.id, it); toServer.addLast(s); sentLog += s }
                 }
-                2 -> if (toServer.isNotEmpty()) serverStep()
-                3 -> if (c.inbox.isNotEmpty()) clientStep(c)
-                4 -> if (sentLog.isNotEmpty() && rnd.nextInt(10) == 0) toServer.addLast(sentLog.random(rnd)) // duplicate
+                pick < editWeight + serverWeight -> if (toServer.isNotEmpty()) serverStep()
+                pick < editWeight + serverWeight + clientWeight -> if (c.inbox.isNotEmpty()) clientStep(c)
+                else -> if (sentLog.isNotEmpty() && rnd.nextInt(10) == 0) toServer.addLast(sentLog.random(rnd)) // duplicate
             }
         }
         while (toServer.isNotEmpty() || clients.any { it.inbox.isNotEmpty() }) {
@@ -111,7 +119,7 @@ class SyncEngineTest {
         val rejected = server.receive("slow", out.opId, out.baseRevision, out.op)
         assertEquals(ServerDocument.RejectReason.STALE, (rejected as ServerDocument.Result.Rejected).reason)
 
-        val applied = server.appliedRevisionOf("slow", out.opId) != null
+        val applied = if (server.appliedRevisionOf("slow", out.opId) != null) 1 else 0
         val resync = client.resync(server.text, server.revision, applied)
         clientText = resync.local.apply(clientText)
         val again = resync.outgoing!!
@@ -150,7 +158,7 @@ class SyncEngineTest {
         local = edit.apply(local)
         assertNull(doc.applyLocal(edit))
         val serverText = "HOST\nline1\nline2\n"
-        val resync = doc.resync(serverText, 7, outstandingApplied = false)
+        val resync = doc.resync(serverText, 7, appliedCount = 0)
         local = resync.local.apply(local)
         assertEquals("HOST\nline1\nline2\nguest\n", local)
         val out = resync.outgoing!!
@@ -169,12 +177,43 @@ class SyncEngineTest {
         server.receive("g", out.opId, out.baseRevision, out.op) // applied, but the ack was lost
         val e2 = TextOperation.replace(4, 4, 0, "2")
         local = e2.apply(local)
-        doc.applyLocal(e2) // buffered
-        val resync = doc.resync(server.text, server.revision, outstandingApplied = server.appliedRevisionOf("g", out.opId) != null)
+        doc.applyLocal(e2)!! // sent at once, but lost with the connection
+        val applied = doc.inFlightOpIds.takeWhile { server.appliedRevisionOf("g", it) != null }.size
+        assertEquals(1, applied)
+        val resync = doc.resync(server.text, server.revision, applied)
         local = resync.local.apply(local)
         val again = resync.outgoing!!
         server.receive("g", again.opId, again.baseRevision, again.op)
         assertEquals("1abc2", server.text)
         assertEquals(server.text, local)
+    }
+
+    @Test
+    fun `an author's edits in flight are placed against only what it had not seen`() {
+        val server = ServerDocument("a.txt", "hello")
+        val alice = ClientDocument.synced("a.txt", "a", "hello", 0)
+        val bob = ClientDocument.synced("a.txt", "b", "hello", 0)
+        var aliceText = "hello"
+        var bobText = "hello"
+        // Alice types "!" then "?" at the end, both sent before any acknowledgement (based on revision 0).
+        val a1 = TextOperation.replace(5, 5, 0, "!").also { aliceText = it.apply(aliceText) }.let { alice.applyLocal(it)!! }
+        val a2 = TextOperation.replace(6, 6, 0, "?").also { aliceText = it.apply(aliceText) }.let { alice.applyLocal(it)!! }
+        assertEquals(0, a2.baseRevision)
+        // Meanwhile Bob types ">" at the start, which reaches the host first.
+        val b1 = TextOperation.replace(5, 0, 0, ">").also { bobText = it.apply(bobText) }.let { bob.applyLocal(it)!! }
+        val rb = server.receive("b", b1.opId, b1.baseRevision, b1.op) as ServerDocument.Result.Applied
+        val ra1 = server.receive("a", a1.opId, a1.baseRevision, a1.op) as ServerDocument.Result.Applied
+        val ra2 = server.receive("a", a2.opId, a2.baseRevision, a2.op) as ServerDocument.Result.Applied
+        assertEquals(">hello!?", server.text)
+        // Alice gets Bob's edit, then her two acknowledgements; Bob gets Alice's edits.
+        aliceText = alice.applyServer(rb.op, rb.revision).apply(aliceText)
+        alice.acknowledge(a1.opId, ra1.revision)
+        alice.acknowledge(a2.opId, ra2.revision)
+        bob.acknowledge(b1.opId, rb.revision)
+        bobText = bob.applyServer(ra1.op, ra1.revision).apply(bobText)
+        bobText = bob.applyServer(ra2.op, ra2.revision).apply(bobText)
+        assertEquals(server.text, aliceText)
+        assertEquals(server.text, bobText)
+        assertFalse(alice.hasPendingChanges)
     }
 }

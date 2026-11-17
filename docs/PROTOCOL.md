@@ -41,24 +41,36 @@ closes the connection.
   (`TextOperation`, ot.js wire format: positive int = retain, negative int = delete, string =
   insert), with `apply`, `compose`, `transform`, and caret `transformIndex`.
 * **Host (`ServerDocument`)**: one authoritative text and revision counter per document. An
-  operation carries `baseRevision` and an `opId` unique per author. The host transforms it against
-  every history entry after `baseRevision`, applies it, increments the revision, acknowledges the
+  operation carries `baseRevision` (the server revision its author had seen) and an `opId` unique
+  per author. Clients send every edit at once, so an author may have several operations in
+  flight; operation *k* is based on `baseRevision` plus the author's own operations 1…*k*−1. The
+  host keeps, per author, a **bridge** (as in the Jupiter algorithm): the other authors'
+  operations that author has not seen yet, transformed to apply after that author's latest
+  operation. An incoming operation is transformed against the part of its author's bridge newer
+  than its `baseRevision` (or, with nothing of its own in flight, against the history since
+  `baseRevision`), the bridge is transformed against it in turn, and every other author's bridge
+  gets the new operation. The host then applies it, increments the revision, acknowledges the
   author and broadcasts the transformed operation to the other subscribers.
 * **Duplicate detection**: `(author, opId)` pairs are remembered (bounded, 10 000); a re-sent
   operation is acknowledged again with its original revision and not re-applied.
 * **History and checkpoints**: the last 2 000 operations per document are kept; older ones are
   folded into a checkpoint (`checkpointText` at `checkpointRevision`). Operations based on a
-  revision older than the checkpoint are rejected as `stale`.
-* **Client (`ClientDocument`)**: the ot.js client state machine — one operation in flight,
-  further local edits composed into a buffer; incoming operations are transformed against the
-  in-flight and buffered operations before being applied to the editor. The client keeps a
-  shadow of the last known server text.
+  revision older than the checkpoint are rejected as `stale`, unless they follow an operation of
+  their own author still bridged (the bridge does not need the history).
+* **Client (`ClientDocument`)**: every local edit is sent at once and kept, in order, in a list of
+  operations in flight (others therefore see each keystroke as it is typed, not a group per round
+  trip). Acknowledgements remove the oldest; an incoming operation is transformed past each
+  operation in flight before being applied to the editor. Only edits made before the first sync
+  wait (composed) until then. The client keeps a shadow of the last known server text.
 * **Recovery (`resync`)**: when the host sends a full `docState` (stale operation, protocol
   error, unregistered document edited locally, reconnect after history was pruned), the client
   computes the server's change as a diff from its shadow, transforms its unacknowledged local
   changes over it, applies the server change locally and re-sends its rebased changes. The host
-  tells the client whether its in-flight operation was already applied, so it is never applied
-  twice. If the host refused an edit (`forbidden`), local changes are discarded instead.
+  tells the client how many of its operations in flight (listed oldest first) it had already
+  applied, so none is applied twice. One recovery runs at a time per document: until it is
+  answered, new edits stay in flight unsent and acknowledgements, remote operations and refusals
+  for that document are ignored (the answer covers them). If the host refused an edit
+  (`forbidden`), local changes are discarded instead.
 * **Unsaved vs on-disk**: documents carry the live editor text (including unsaved changes);
   file synchronisation carries bytes on disk. On a guest, disk writes for a file that is open as
   a shared document are skipped (the document is authoritative); a host save sends `docSaved`
@@ -94,6 +106,7 @@ presence to newcomers and broadcasts `participantLeft` on disconnect, which clea
 
 Guests reconnect with exponential backoff (1 s … 30 s). The plugin gives up after 8 attempts (about two minutes) and leaves the session automatically, as it does when the host ends the session or removes the guest. `hello` carries the resume key; within
 30 minutes the host restores the same participant id, role (never escalated by the token) and
-document subscriptions. The guest then sends `resumeDoc(path, revision, outstandingOpId)` for each
+document subscriptions. The guest then sends `resumeDoc(path, revision, inFlightOpIds)` for each
 document; the host replies with the missing history (`docCatchUp`), in which the guest recognises
-its own in-flight operation as an acknowledgement, or with a `docState` snapshot.
+its own operations in flight as acknowledgements and then re-sends the rest in order, or with a
+`docState` snapshot carrying `appliedCount`.

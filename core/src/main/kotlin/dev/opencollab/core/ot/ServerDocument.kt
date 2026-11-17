@@ -3,14 +3,22 @@ package dev.opencollab.core.ot
 /**
  * The host-authoritative copy of one shared document.
  *
- * Every accepted operation increments [revision]. Operations based on an older revision are
- * transformed against the history recorded since that revision. Operation IDs are unique
- * per author; a re-sent operation (e.g. after a reconnect) is detected and acknowledged
- * again without being applied twice.
+ * Every accepted operation increments [revision]. Clients send each edit at once, so an author
+ * may have several operations in flight: operation k is based on the revision the author had
+ * seen plus the author's own operations 1..k-1. For each author the server therefore keeps a
+ * *bridge* (as in the Jupiter algorithm): the other authors' operations that author has not
+ * seen yet, transformed so they apply after that author's latest operation. An incoming
+ * operation is transformed against the part of its author's bridge it had not seen, and the
+ * bridge is transformed against it in turn. Without operations of its own in flight, an
+ * author's operation is transformed against the history since its base revision, as usual.
  *
- * History is bounded: once it exceeds [maxHistory] entries the oldest entries are folded
- * into a checkpoint. Operations based on a revision older than the checkpoint are rejected
- * as stale, and the client recovers from a fresh snapshot (see [ClientDocument.resync]).
+ * Operation IDs are unique per author; a re-sent operation (e.g. after a reconnect) is detected
+ * and acknowledged again without being applied twice.
+ *
+ * History is bounded: once it exceeds [maxHistory] entries the oldest entries are folded into a
+ * checkpoint. Operations based on a revision older than the checkpoint, or that would need a
+ * bridge dropped meanwhile, are rejected as stale, and the client recovers from a fresh snapshot
+ * (see [ClientDocument.resync]).
  *
  * Not thread-safe: the owning session serialises access.
  */
@@ -47,6 +55,13 @@ class ServerDocument(
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Int>?): Boolean = size > maxRememberedOpIds
     }
 
+    /** Another author's operation at [revision], as it applies after this author's latest operation. */
+    private class Bridged(val op: TextOperation, val revision: Int)
+    /** Per author: the others' operations applied after that author's latest one, in order. */
+    private val bridges = HashMap<String, ArrayDeque<Bridged>>()
+    /** Per author: revision of their latest applied operation. */
+    private val lastOwnRevision = HashMap<String, Int>()
+
     fun historySize(): Int = history.size
 
     fun appliedRevisionOf(author: String, opId: String): Int? = appliedOps[key(author, opId)]
@@ -56,14 +71,15 @@ class ServerDocument(
         if (baseRevision > revision || baseRevision < 0) {
             return Result.Rejected(RejectReason.INVALID, "Base revision $baseRevision is outside 0..$revision")
         }
-        if (baseRevision < checkpointRevision) {
-            return Result.Rejected(RejectReason.STALE, "Base revision $baseRevision predates checkpoint $checkpointRevision")
-        }
+        val unseen = unseenBy(author, baseRevision)
+            ?: return Result.Rejected(RejectReason.STALE, "Base revision $baseRevision of $author can no longer be transformed (checkpoint $checkpointRevision)")
         var transformed = op
+        val rebridged = ArrayList<Bridged>(unseen.size)
         try {
-            for (entry in history) {
-                if (entry.revision <= baseRevision) continue
-                transformed = TextOperation.transform(transformed, entry.op).first
+            for (other in unseen) {
+                val (mine, theirs) = TextOperation.transform(transformed, other.op)
+                transformed = mine
+                rebridged += Bridged(theirs, other.revision)
             }
             if (transformed.baseLength != text.length) {
                 return Result.Rejected(RejectReason.INVALID, "Operation length does not match revision $baseRevision")
@@ -77,9 +93,32 @@ class ServerDocument(
         revision++
         history.addLast(HistoryEntry(transformed, opId, author, revision))
         appliedOps[key(author, opId)] = revision
+
+        // This author has now seen nothing after its own operation except what it had not seen
+        // yet, which now applies after this operation. Everybody else gets this operation as is:
+        // it applies to the current text, i.e. after everything already in their bridges.
+        bridges[author] = ArrayDeque(rebridged)
+        lastOwnRevision[author] = revision
+        for ((other, bridge) in bridges) if (other != author) bridge.addLast(Bridged(transformed, revision))
         pruneHistory()
         return Result.Applied(transformed, revision)
     }
+
+    /**
+     * The operations [author] had not seen in a context based on [baseRevision] (plus that author's
+     * own operations since), each as it applies in that context; null if they are no longer known.
+     */
+    private fun unseenBy(author: String, baseRevision: Int): List<Bridged>? =
+        if ((lastOwnRevision[author] ?: -1) > baseRevision) {
+            // Earlier operations of this author are in flight: its context includes them, which the
+            // bridge accounts for (it does not need the history, so a pruned one is fine). Drop
+            // what the author had seen.
+            bridges[author]?.filter { it.revision > baseRevision }
+        } else if (baseRevision < checkpointRevision) {
+            null
+        } else {
+            history.filter { it.revision > baseRevision }.map { Bridged(it.op, it.revision) }
+        }
 
     /** Entries with revision > [sinceRevision], or null if that part of history was pruned. */
     fun historySince(sinceRevision: Int): List<HistoryEntry>? {
@@ -92,6 +131,7 @@ class ServerDocument(
         history.clear()
         checkpointRevision = revision
         checkpointText = text
+        bridges.clear() // operations in flight from before now are stale and recover by resync
     }
 
     private fun pruneHistory() {
@@ -100,6 +140,9 @@ class ServerDocument(
             checkpointText = oldest.op.apply(checkpointText)
             checkpointRevision = oldest.revision
         }
+        // A bridge as long as the history belongs to an author idle for that long: its operations
+        // in flight, if any, are stale anyway. Keeps memory bounded per author.
+        bridges.values.removeIf { it.size > maxHistory }
     }
 
     private fun key(author: String, opId: String) = "$author\u0000$opId"

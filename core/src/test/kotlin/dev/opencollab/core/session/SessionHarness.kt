@@ -57,7 +57,12 @@ class FakeIde(name: String) : ClientHandler {
     override fun onStateChanged(state: ClientState, detail: String) { states += state; stateDetails += detail }
     override fun applyRemoteEdit(path: String, op: TextOperation) { texts[path] = op.apply(texts.getValue(path)) }
     override fun onDocumentUnavailable(path: String, reason: String) { unavailable += path }
-    override fun onPresence(presence: Message.PresenceBroadcast) { this.presence[presence.participantId] = presence }
+    /** Each caret received, with the length of that document here at that moment. */
+    val caretsWithLength = CopyOnWriteArrayList<Pair<Int, Int>>()
+    override fun onPresence(presence: Message.PresenceBroadcast) {
+        this.presence[presence.participantId] = presence
+        presence.path?.let { texts[it] }?.let { caretsWithLength += presence.caret to it.length }
+    }
     override fun onParticipantLeft(participantId: String) { presence.remove(participantId) }
     override fun onFileRequestFailed(mutation: FileMutation, error: String) { failedFileRequests += mutation to error }
     override fun onFilesChanged(paths: Collection<String>, initial: Boolean) { filesChanged += paths }

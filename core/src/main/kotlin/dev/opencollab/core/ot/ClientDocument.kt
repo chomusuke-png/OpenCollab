@@ -1,13 +1,18 @@
 package dev.opencollab.core.ot
 
 /**
- * Client side of the OT protocol for one document (the classic ot.js client state machine):
- * at most one operation is in flight awaiting acknowledgement; further local edits are
- * composed into a buffer that is sent once the in-flight operation is acknowledged.
+ * Client side of the OT protocol for one document.
  *
- * The client also keeps a shadow copy of the last known server text, which makes
- * recovery possible when the server can no longer transform a stale operation or when
- * the document was edited locally before it was registered with the server.
+ * Every local edit is sent at once: several operations may be in flight, in order, each based
+ * on the server revision this client had seen when it was made plus the client's own earlier
+ * operations. The server transforms them against what the client had not seen yet (see
+ * [ServerDocument]), so others see each keystroke as it happens instead of a group per round
+ * trip. Acknowledgements and other participants' operations arrive in server order; an
+ * incoming operation is transformed past the operations still in flight.
+ *
+ * The client also keeps a shadow copy of the last known server text, which makes recovery
+ * possible when the server can no longer transform a stale operation or when the document was
+ * edited locally before it was registered with the server.
  *
  * Not thread-safe: callers must invoke it from the thread that owns the editor document.
  */
@@ -24,7 +29,8 @@ class ClientDocument private constructor(
     /** Result of a resync: [local] must be applied to the editor document, then [outgoing] sent. */
     data class Resync(val local: TextOperation, val outgoing: Outgoing?)
 
-    private class Pending(val opId: String, val baseRevision: Int, val op: TextOperation)
+    /** An operation sent and not acknowledged yet, as it applies after the earlier ones in flight. */
+    private class InFlight(val opId: String, var op: TextOperation)
 
     var revision: Int = initialRevision
         private set
@@ -37,28 +43,37 @@ class ClientDocument private constructor(
     var isSynced: Boolean = synced
         private set
 
-    private var outstanding: Pending? = null
-    private var buffer: TextOperation? = null
+    private val inFlight = ArrayDeque<InFlight>()
+    /** Local edits made before the first server state; sent by [resync]. */
+    private var unsynced: TextOperation? = null
     private var seq = 0L
 
-    val hasPendingChanges: Boolean get() = outstanding != null || buffer != null
-    val outstandingOpId: String? get() = outstanding?.opId
+    val hasPendingChanges: Boolean get() = inFlight.isNotEmpty() || unsynced != null
 
-    /** Records a local edit; returns an operation to send now, if any. */
+    /** Local edits not sent yet (only before the first sync: afterwards every edit is sent at once). */
+    val hasUnsentChanges: Boolean get() = unsynced != null
+
+    /** Ids of the operations in flight, oldest first (sent when resuming, see [resync]). */
+    val inFlightOpIds: List<String> get() = inFlight.map { it.opId }
+
+    /** The operation the next acknowledgement must be for. */
+    val firstInFlightOpId: String? get() = inFlight.firstOrNull()?.opId
+
+    /** Records a local edit; returns the operation to send now (null before the first sync). */
     fun applyLocal(op: TextOperation): Outgoing? {
         if (op.isNoop && op.baseLength == op.targetLength) return null
-        if (!isSynced || outstanding != null) {
-            buffer = buffer?.compose(op) ?: op
+        if (!isSynced) {
+            unsynced = unsynced?.compose(op) ?: op
             return null
         }
-        val pending = Pending(nextOpId(), revision, op)
-        outstanding = pending
-        return Outgoing(pending.opId, pending.baseRevision, pending.op)
+        val sent = InFlight(nextOpId(), op)
+        inFlight.addLast(sent)
+        return Outgoing(sent.opId, revision, op)
     }
 
     /**
-     * Applies an operation from another participant that produced [newRevision]. Returns
-     * the operation to apply to the local editor document.
+     * Applies an operation from another participant that produced [newRevision] (it applies to
+     * the server text at [revision]). Returns the operation to apply to the local editor document.
      */
     fun applyServer(op: TextOperation, newRevision: Int): TextOperation {
         check(isSynced) { "Document $path is not synced" }
@@ -68,81 +83,74 @@ class ClientDocument private constructor(
         shadow = op.apply(shadow)
         revision = newRevision
         var incoming = op
-        outstanding?.let { pending ->
-            val (pendingPrime, incomingPrime) = TextOperation.transform(pending.op, incoming)
-            outstanding = Pending(pending.opId, pending.baseRevision, pendingPrime)
-            incoming = incomingPrime
-        }
-        buffer?.let { buf ->
-            val (bufferPrime, incomingPrime) = TextOperation.transform(buf, incoming)
-            buffer = bufferPrime
+        for (sent in inFlight) {
+            val (sentPrime, incomingPrime) = TextOperation.transform(sent.op, incoming)
+            sent.op = sentPrime
             incoming = incomingPrime
         }
         return incoming
     }
 
-    /** Handles the acknowledgement of our in-flight operation; returns the next operation to send. */
-    fun acknowledge(opId: String, newRevision: Int): Outgoing? {
-        val pending = outstanding ?: throw IllegalStateException("Unexpected ack $opId for $path")
-        check(pending.opId == opId) { "Ack for $opId but ${pending.opId} is in flight" }
+    /** Handles the acknowledgement of our oldest operation in flight. */
+    fun acknowledge(opId: String, newRevision: Int) {
+        val sent = inFlight.firstOrNull() ?: throw IllegalStateException("Unexpected ack $opId for $path")
+        check(sent.opId == opId) { "Ack for $opId but ${sent.opId} is the oldest in flight" }
         if (newRevision != revision + 1) {
-            throw OutOfOrderException("Ack revision $newRevision does not follow ${revision}")
+            throw OutOfOrderException("Ack revision $newRevision does not follow $revision")
         }
-        shadow = pending.op.apply(shadow)
+        shadow = sent.op.apply(shadow)
         revision = newRevision
-        outstanding = null
-        val buf = buffer ?: return null
-        buffer = null
-        val next = Pending(nextOpId(), revision, buf)
-        outstanding = next
-        return Outgoing(next.opId, next.baseRevision, next.op)
+        inFlight.removeFirst()
     }
 
-    /** The in-flight operation to re-send unchanged after a reconnect (same ID → deduplicated). */
-    fun outstandingForResend(): Outgoing? = outstanding?.let { Outgoing(it.opId, it.baseRevision, it.op) }
+    /**
+     * After reconnecting and catching up: the operations still in flight, to send again in order
+     * (same ids, so the server ignores any it already applied), based on the current revision.
+     */
+    fun inFlightForResend(): List<Outgoing> = inFlight.map { Outgoing(it.opId, revision, it.op) }
 
     /**
-     * Recovers from a fresh server snapshot ([serverText] at [serverRevision]).
-     * [outstandingApplied] tells whether the server already applied our in-flight operation.
-     * Local unacknowledged changes are rebased on top of the snapshot and re-sent.
+     * Recovers from a fresh server snapshot ([serverText] at [serverRevision]). The server had
+     * already applied the first [appliedCount] operations in flight; the rest, and edits made
+     * before the first sync, are rebased on top of the snapshot and sent again as one operation.
      */
-    fun resync(serverText: String, serverRevision: Int, outstandingApplied: Boolean, discardLocal: Boolean = false): Resync {
+    fun resync(serverText: String, serverRevision: Int, appliedCount: Int, discardLocal: Boolean = false): Resync {
+        var localText = shadow
+        inFlight.forEach { localText = it.op.apply(localText) }
+        unsynced?.let { localText = it.apply(localText) }
         if (discardLocal) {
             // Drop unacknowledged local changes (e.g. the host refused them): local text -> server text.
-            var localText = shadow
-            outstanding?.let { localText = it.op.apply(localText) }
-            buffer?.let { localText = it.apply(localText) }
-            shadow = serverText
-            revision = serverRevision
-            isSynced = true
-            outstanding = null
-            buffer = null
+            reset(serverText, serverRevision)
             return Resync(TextDiff.diff(localText, serverText), null)
         }
         var base = shadow
         var pendingLocal: TextOperation? = null
-        outstanding?.let { pending ->
-            if (outstandingApplied) base = pending.op.apply(base) else pendingLocal = pending.op
+        inFlight.forEachIndexed { i, sent ->
+            if (i < appliedCount) base = sent.op.apply(base) else pendingLocal = pendingLocal?.compose(sent.op) ?: sent.op
         }
-        buffer?.let { buf -> pendingLocal = pendingLocal?.compose(buf) ?: buf }
+        unsynced?.let { edits -> pendingLocal = pendingLocal?.compose(edits) ?: edits }
 
         val serverDelta = TextDiff.diff(base, serverText)
         val local = pendingLocal ?: TextOperation.identity(base.length)
         val (localPrime, serverPrime) = TextOperation.transform(local, serverDelta)
 
-        shadow = serverText
-        revision = serverRevision
-        isSynced = true
-        outstanding = null
-        buffer = null
+        reset(serverText, serverRevision)
         val outgoing = if (localPrime.isNoop && localPrime.baseLength == localPrime.targetLength) {
             null
         } else {
-            val p = Pending(nextOpId(), revision, localPrime)
-            outstanding = p
-            Outgoing(p.opId, p.baseRevision, p.op)
+            val sent = InFlight(nextOpId(), localPrime)
+            inFlight.addLast(sent)
+            Outgoing(sent.opId, revision, localPrime)
         }
         return Resync(serverPrime, outgoing)
+    }
+
+    private fun reset(serverText: String, serverRevision: Int) {
+        shadow = serverText
+        revision = serverRevision
+        isSynced = true
+        inFlight.clear()
+        unsynced = null
     }
 
     private fun nextOpId(): String = "$opIdPrefix-${++seq}"

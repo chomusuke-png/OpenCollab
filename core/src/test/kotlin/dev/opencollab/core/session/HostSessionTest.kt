@@ -190,6 +190,38 @@ class HostSessionTest {
     }
 
     @Test
+    fun `a caret never arrives before the text it was typed after`() {
+        write(host, "notes.txt", "line one\nline two\n")
+        Harness(host).use { h ->
+            val alice = h.guest("alice", guestDir("alice"), presenceIntervalMillis = 0)
+            val bob = h.guest("bob", guestDir("bob"), presenceIntervalMillis = 0)
+            awaitState(alice, ClientState.CONNECTED)
+            awaitState(bob, ClientState.CONNECTED)
+            alice.open("notes.txt", "line one\nline two\n")
+            bob.open("notes.txt", "line one\nline two\n")
+            eventually { alice.client.isDocumentSynced("notes.txt") && bob.client.isDocumentSynced("notes.txt") }
+            // Type at the end of the first line, faster than acknowledgements come back, moving the
+            // caret after each letter as an editor does.
+            alice.onEdt {
+                var caret = 8
+                for (letter in "!?abc") {
+                    val text = alice.texts.getValue("notes.txt")
+                    val op = dev.opencollab.core.ot.TextOperation.replace(text.length, caret, 0, letter.toString())
+                    alice.texts["notes.txt"] = op.apply(text)
+                    alice.client.localEdit("notes.txt", op)
+                    caret++
+                    alice.client.updatePresence("notes.txt", caret, emptyList())
+                }
+            }
+            eventually { bob.text("notes.txt") == "line one!?abc\nline two\n" && bob.presence[alice.client.participantId]?.caret == 13 }
+            // A caret after the n-th typed letter (offset 8 + n) may only arrive once those n letters
+            // are here (length 18 + n); otherwise it points into the next line.
+            val ahead = bob.caretsWithLength.filter { (caret, length) -> caret - 8 > length - 18 }
+            assertEquals(emptyList<Pair<Int, Int>>(), ahead, "carets (offset to length) that arrived before their text")
+        }
+    }
+
+    @Test
     fun `chat floods are rate limited by the host`() {
         sampleProject()
         Harness(host).use { h ->

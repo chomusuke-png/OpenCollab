@@ -9,8 +9,9 @@ import kotlinx.serialization.json.JsonElement
  * v3: the host pings participants and broadcasts their round-trip times; Welcome carries the session age.
  * v4: session chat relayed and stamped by the host, with recent history for newcomers.
  * v5: shared consoles (the host's run and build output) and guest requests to run on the host.
+ * v6: every edit is sent at once (several operations in flight per author); resuming lists them all.
  */
-const val PROTOCOL_VERSION = 5
+const val PROTOCOL_VERSION = 6
 
 /** Stands for the host's project folder in shared console text; each guest puts its own folder back. */
 const val PROJECT_DIR_MACRO = "\$PROJECT_DIR\$"
@@ -201,22 +202,23 @@ sealed class Message {
     data class CloseDocument(val path: String) : Message()
 
     /**
-     * Full document state. [outstandingApplied] answers whether the requester's in-flight
-     * operation ([ResumeDocument.outstandingOpId]) was already applied.
+     * Full document state. [appliedCount] says how many of the requester's operations in flight
+     * ([ResumeDocument.inFlightOpIds], oldest first) the host had already applied.
      */
     @Serializable @SerialName("docState")
     data class DocumentState(
         val path: String,
         val revision: Int,
         val text: String,
-        val outstandingApplied: Boolean = false,
+        val appliedCount: Int = 0,
     ) : Message()
 
     @Serializable @SerialName("resumeDoc")
     data class ResumeDocument(
         val path: String,
         val revision: Int,
-        val outstandingOpId: String? = null,
+        /** The requester's operations not acknowledged yet, oldest first. */
+        val inFlightOpIds: List<String> = emptyList(),
         /** Skip history replay and send the full state (used after protocol errors). */
         val forceSnapshot: Boolean = false,
     ) : Message()

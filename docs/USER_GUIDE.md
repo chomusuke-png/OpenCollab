@@ -102,7 +102,10 @@ OpenCollab mirror, so it can never overwrite your own data.
   document for all participants.
 * **Cursors and selections:** other participants' carets appear in their color, their
   selections as a translucent highlight. The name tag above a caret shows for three seconds after
-  that person moves or types, then fades so it does not cover your code.
+  that person moves or types, then fades so it does not cover your code. A caret is only sent
+  once the text it follows has been sent, so it never jumps ahead (e.g. to the next line). Every
+  keystroke is sent the moment it is typed (without waiting for the host to confirm the previous
+  one), so the others see your text appear letter by letter.
 * **Follow:** hover a participant and click the eye icon (or double-click them, or right-click >
   *Follow*). Your editor then keeps showing their file and caret; "Following …" appears above the
   list. Clicking or typing in an editor, *Stop following*, or that person leaving ends it.

@@ -35,6 +35,8 @@ object MessageCodec {
     const val MAX_SELECTIONS = 64
     const val MAX_PATHS_PER_REQUEST = 20_000
     const val MAX_LATENCY_ENTRIES = 256
+    /** Operations a client may list as in flight when resuming a document. */
+    const val MAX_IN_FLIGHT = 10_000
     const val MAX_CHAT_CHARS = 2_000
     const val MAX_CHAT_HISTORY = 500
     const val MAX_TITLE = 200
@@ -119,10 +121,11 @@ object MessageCodec {
             is Message.ResumeFiles -> { id(m.requestId); check(m.lastSeq >= 0, "Invalid sequence") }
             is Message.OpenDocument -> path(m.path)
             is Message.CloseDocument -> path(m.path)
-            is Message.DocumentState -> { path(m.path); check(m.revision >= 0, "Invalid revision") }
+            is Message.DocumentState -> { path(m.path); check(m.revision >= 0 && m.appliedCount >= 0, "Invalid revision") }
             is Message.ResumeDocument -> {
                 path(m.path); check(m.revision >= 0, "Invalid revision")
-                m.outstandingOpId?.let(::id)
+                check(m.inFlightOpIds.size <= MAX_IN_FLIGHT, "Too many operations in flight")
+                m.inFlightOpIds.forEach(::id)
             }
             is Message.DocumentCatchUp -> { path(m.path); m.entries.forEach { id(it.opId); opFromJson(it.op) } }
             is Message.DocOp -> {

@@ -194,7 +194,9 @@ class CollabClient(
     /** Records a local edit made in the editor (document executor). */
     fun localEdit(path: String, op: TextOperation) {
         val doc = docs[path] ?: return
-        doc.applyLocal(op)?.let { send(Message.DocOp(path, it.opId, it.baseRevision, MessageCodec.opToJson(it.op))) }
+        val out = doc.applyLocal(op) ?: return
+        // While catching up after a reconnect, the edit stays in flight and is sent right after.
+        if (!needsResume && path !in catchingUp) sendDocOp(path, out)
     }
 
     fun documentSaved(path: String) {
@@ -202,8 +204,39 @@ class CollabClient(
         send(Message.DocumentSaved(path, doc.revision))
     }
 
+    /** Caret held back until the edits it refers to have been sent (document executor). */
+    private var heldPresence: Message.Presence? = null
+
+    /**
+     * Shares our caret (document executor). Edits are sent as they happen, but not before the
+     * first sync or while catching up after a reconnect: then the caret waits for them, since
+     * sent earlier it would point past text the others do not have yet (a line down at the end
+     * of a line).
+     */
     fun updatePresence(path: String?, caret: Int, selections: List<TextRange>) {
-        presence.submit(Message.Presence(path, caret, selections.take(MessageCodec.MAX_SELECTIONS)))
+        val m = Message.Presence(path, caret, selections.take(MessageCodec.MAX_SELECTIONS))
+        if (path != null && hasUnsentEdits(path)) {
+            heldPresence = m
+            return
+        }
+        heldPresence = null
+        presence.submit(m)
+    }
+
+    private fun hasUnsentEdits(path: String) =
+        docs[path]?.hasUnsentChanges == true || ((needsResume || path in catchingUp) && docs[path]?.hasPendingChanges == true)
+
+    /** Sends an operation, then a caret that was waiting for it (document executor). */
+    private fun sendDocOp(path: String, out: ClientDocument.Outgoing) {
+        send(Message.DocOp(path, out.opId, out.baseRevision, MessageCodec.opToJson(out.op)))
+        releaseHeldPresence()
+    }
+
+    private fun releaseHeldPresence() {
+        val held = heldPresence ?: return
+        if (held.path != null && hasUnsentEdits(held.path)) return
+        heldPresence = null
+        presence.submit(held)
     }
 
     /** Asks the host to apply a local filesystem change (guests) or reports one (host bridge). */
@@ -282,6 +315,7 @@ class CollabClient(
 
     private fun onConnectionLost(reason: String) {
         connection = null
+        needsResume = true // before welcomed: no edit may slip out between reconnecting and catching up
         welcomed = false
         receivedPerRequest.clear()
         mirror?.discardPartials()
@@ -526,19 +560,31 @@ class CollabClient(
 
     // ---- Documents (document executor) -------------------------------------------------
 
+    /**
+     * Documents waiting for a catch-up or snapshot (document executor). Their new edits are not
+     * sent meanwhile: an edit sent before the reply would be counted as not applied and resent.
+     */
+    private val catchingUp = HashSet<String>()
+    /** Set when the connection drops, until [resumeDocuments] has asked to catch up. */
+    @Volatile private var needsResume = false
+
     private fun resumeDocuments(resumed: Boolean) {
         for ((path, doc) in docs) {
             if (!doc.isSynced) {
                 send(Message.OpenDocument(path))
             } else {
-                send(Message.ResumeDocument(path, doc.revision, doc.outstandingOpId, forceSnapshot = !resumed))
+                catchingUp += path
+                send(Message.ResumeDocument(path, doc.revision, doc.inFlightOpIds, forceSnapshot = !resumed))
             }
         }
+        needsResume = false
     }
 
     private fun forceResync(path: String, doc: ClientDocument, discard: Boolean) {
         if (discard) discardOnResync += path
-        send(Message.ResumeDocument(path, doc.revision, doc.outstandingOpId, forceSnapshot = true))
+        // One recovery at a time: a second reply would count the first one's resent edits as new.
+        if (!catchingUp.add(path)) return
+        send(Message.ResumeDocument(path, doc.revision, doc.inFlightOpIds, forceSnapshot = true))
     }
 
     private fun onDocumentMessage(m: Message) {
@@ -546,20 +592,19 @@ class CollabClient(
             is Message.DocumentState -> {
                 val doc = docs[m.path] ?: return
                 val discard = discardOnResync.remove(m.path)
-                val r = doc.resync(m.text, m.revision, m.outstandingApplied, discardLocal = discard)
+                catchingUp -= m.path
+                val r = doc.resync(m.text, m.revision, m.appliedCount, discardLocal = discard)
                 if (!r.local.isNoop || r.local.baseLength != r.local.targetLength) handler.applyRemoteEdit(m.path, r.local)
-                r.outgoing?.let { send(Message.DocOp(m.path, it.opId, it.baseRevision, MessageCodec.opToJson(it.op))) }
+                r.outgoing?.let { sendDocOp(m.path, it) }
+                releaseHeldPresence()
             }
             is Message.DocumentCatchUp -> {
                 val doc = docs[m.path] ?: return
                 if (m.fromRevision != doc.revision) { forceResync(m.path, doc, false); return }
-                val before = doc.outstandingOpId
                 try {
                     for (entry in m.entries) {
-                        if (entry.author == participantId && entry.opId == doc.outstandingOpId) {
-                            doc.acknowledge(entry.opId, entry.revision)?.let {
-                                send(Message.DocOp(m.path, it.opId, it.baseRevision, MessageCodec.opToJson(it.op)))
-                            }
+                        if (entry.author == participantId && entry.opId == doc.firstInFlightOpId) {
+                            doc.acknowledge(entry.opId, entry.revision)
                         } else {
                             val local = doc.applyServer(MessageCodec.opFromJson(entry.op), entry.revision)
                             handler.applyRemoteEdit(m.path, local)
@@ -569,15 +614,15 @@ class CollabClient(
                     forceResync(m.path, doc, false)
                     return
                 }
-                if (before != null && doc.outstandingOpId == before) {
-                    doc.outstandingForResend()?.let {
-                        send(Message.DocOp(m.path, it.opId, it.baseRevision, MessageCodec.opToJson(it.op)))
-                    }
-                }
+                // Caught up: what is still in flight never reached the host. Send it again, in order.
+                catchingUp -= m.path
+                doc.inFlightForResend().forEach { sendDocOp(m.path, it) }
+                releaseHeldPresence()
             }
             is Message.RemoteOp -> {
                 val doc = docs[m.path] ?: return
-                if (!doc.isSynced) return
+                // While recovering, the awaited snapshot or catch-up already contains this.
+                if (!doc.isSynced || m.path in catchingUp) return
                 try {
                     val local = doc.applyServer(MessageCodec.opFromJson(m.op), m.revision)
                     handler.applyRemoteEdit(m.path, local)
@@ -588,17 +633,20 @@ class CollabClient(
             }
             is Message.OpAck -> {
                 val doc = docs[m.path] ?: return
-                if (doc.outstandingOpId != m.opId) return // duplicate acknowledgement
+                if (doc.firstInFlightOpId != m.opId) return // duplicate acknowledgement
+                if (m.path in catchingUp) return // covered by the awaited snapshot or catch-up
                 try {
-                    doc.acknowledge(m.opId, m.revision)?.let {
-                        send(Message.DocOp(m.path, it.opId, it.baseRevision, MessageCodec.opToJson(it.op)))
-                    }
+                    doc.acknowledge(m.opId, m.revision)
                 } catch (e: RuntimeException) {
                     forceResync(m.path, doc, false)
                 }
             }
             is Message.OpRejected -> {
                 val doc = docs[m.path] ?: return
+                if (m.path in catchingUp) { // already recovering; a refusal still drops our edits
+                    if (m.reason == "forbidden") discardOnResync += m.path
+                    return
+                }
                 handler.onLog("Edit to ${m.path} was refused (${m.reason}); resynchronising")
                 forceResync(m.path, doc, discard = m.reason == "forbidden")
             }

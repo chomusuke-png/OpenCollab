@@ -607,8 +607,9 @@ class HostSession(
                 ),
             )
         } else {
-            val applied = m.outstandingOpId?.let { doc.appliedRevisionOf(peer.id, it) != null } ?: false
-            peer.send(Message.DocumentState(m.path, doc.revision, doc.text, outstandingApplied = applied))
+            // The host applies an author's operations in order, so the applied ones are a prefix.
+            val applied = m.inFlightOpIds.takeWhile { doc.appliedRevisionOf(peer.id, it) != null }.size
+            peer.send(Message.DocumentState(m.path, doc.revision, doc.text, appliedCount = applied))
         }
     }
 

@@ -8,6 +8,7 @@ import dev.opencollab.core.files.toConfig
 import dev.opencollab.core.ot.ServerDocument
 import dev.opencollab.core.presence.RateLimiter
 import dev.opencollab.core.protocol.ChatEntry
+import dev.opencollab.core.protocol.ConsoleKind
 import dev.opencollab.core.protocol.ConsoleStream
 import dev.opencollab.core.protocol.RunTarget
 import dev.opencollab.core.protocol.DocHistoryEntry
@@ -690,8 +691,8 @@ class HostSession(
     }
 
     /** A process or build started in the host IDE. Thread-safe. */
-    fun consoleStarted(consoleId: String, title: String, requestedBy: String? = null) = exec.execute {
-        val started = Message.ConsoleStarted(consoleId, title.take(MessageCodec.MAX_TITLE).ifBlank { "?" }, requestedBy)
+    fun consoleStarted(consoleId: String, title: String, requestedBy: String? = null, kind: ConsoleKind = ConsoleKind.RUN) = exec.execute {
+        val started = Message.ConsoleStarted(consoleId, title.take(MessageCodec.MAX_TITLE).ifBlank { "?" }, requestedBy, kind)
         consoles[consoleId] = ConsoleLog(started)
         while (consoles.size > config.consoleReplayCount) consoles.remove(consoles.keys.first())
         broadcastToGuests(started)

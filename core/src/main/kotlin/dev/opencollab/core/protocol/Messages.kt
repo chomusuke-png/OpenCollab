@@ -82,6 +82,10 @@ data class ChatEntry(
 @Serializable
 enum class ConsoleStream { STDOUT, STDERR, SYSTEM }
 
+/** Where guests show a console: IntelliJ's Run window (a process) or its Build window (a build). */
+@Serializable
+enum class ConsoleKind { RUN, BUILD }
+
 /** Something guests may ask the host to run: a run configuration, or building the project. */
 @Serializable
 data class RunTarget(val id: String, val name: String, val kind: RunTargetKind)
@@ -289,7 +293,13 @@ sealed class Message {
      * whose request started it, if any. Paths inside the project appear as [PROJECT_DIR_MACRO].
      */
     @Serializable @SerialName("consoleStarted")
-    data class ConsoleStarted(val consoleId: String, val title: String, val requestedBy: String? = null) : Message()
+    data class ConsoleStarted(
+        val consoleId: String,
+        val title: String,
+        val requestedBy: String? = null,
+        /** 2.0.0 hosts omit it (a run). */
+        val kind: ConsoleKind = ConsoleKind.RUN,
+    ) : Message()
 
     @Serializable @SerialName("consoleOutput")
     data class ConsoleOutput(val consoleId: String, val stream: ConsoleStream, val text: String) : Message()

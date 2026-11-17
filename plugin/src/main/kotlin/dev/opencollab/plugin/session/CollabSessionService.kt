@@ -139,6 +139,11 @@ class CollabSessionService(private val project: Project) : Disposable {
                     val hint = if (!joinedOnce) connectionHint(detail) else null
                     hint?.let(::appendLog)
                     notify(listOfNotNull(message("notify.disconnected", detail), hint).joinToString("\n\n"), NotificationType.WARNING)
+                    // The host ended the session, removed us, or stayed unreachable: leave on our own
+                    // so the panel is ready to host or join again. The status keeps the reason.
+                    val ended = mode
+                    val reason = status
+                    ApplicationManager.getApplication().invokeLater({ if (mode === ended) leave(finalStatus = reason) }, ModalityState.any())
                 }
                 fire()
             }
@@ -350,7 +355,9 @@ class CollabSessionService(private val project: Project) : Disposable {
         val sched = SystemScheduler("opencollab-guest-timer").also { scheduler = it }
         val client = CollabClient(
             invite.connector(), settings.displayName.ifBlank { "Guest" }, invite.token, bridge, bridge.edtExecutor, sched,
-            mirror, ReconnectPolicy(), presenceIntervalMillis = settings.presenceIntervalMs.toLong(),
+            // About two minutes of retries (1+2+4+8+16+30+30+30 s): enough for a network blip; after
+            // that the host is considered gone and the guest leaves automatically.
+            mirror, ReconnectPolicy(maxAttempts = 8), presenceIntervalMillis = settings.presenceIntervalMs.toLong(),
         )
         bridge.client = client
         bridge.install()
@@ -415,8 +422,13 @@ class CollabSessionService(private val project: Project) : Disposable {
 
     // ---- Leaving ------------------------------------------------------------------------
 
-    fun leave() {
-        when (val m = mode) {
+    /** Ends hosting or leaves the joined session. [finalStatus] replaces "Not in a session" (e.g. why we left). */
+    fun leave(finalStatus: String? = null) {
+        val m = mode
+        // Idle before closing the client, so its final DISCONNECTED event is not reported as a
+        // connection loss (and does not trigger another automatic leave).
+        mode = Mode.Idle
+        when (m) {
             is Mode.Hosting -> {
                 m.bridge.client.close()
                 m.session.close()
@@ -433,12 +445,11 @@ class CollabSessionService(private val project: Project) : Disposable {
         }
         scheduler?.close()
         scheduler = null
-        mode = Mode.Idle
         participants = emptyList()
         myRole = null
         sessionStartedAt = null
         latencies = emptyMap()
-        status = message("status.idle")
+        status = finalStatus ?: message("status.idle")
         fire()
     }
 

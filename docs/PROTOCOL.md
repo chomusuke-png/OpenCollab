@@ -90,7 +90,7 @@ presence to newcomers and broadcasts `participantLeft` on disconnect, which clea
 
 ## Reconnect
 
-Guests reconnect with exponential backoff (1 s … 30 s). `hello` carries the resume key; within
+Guests reconnect with exponential backoff (1 s … 30 s). The plugin gives up after 8 attempts (about two minutes) and leaves the session automatically, as it does when the host ends the session or removes the guest. `hello` carries the resume key; within
 30 minutes the host restores the same participant id, role (never escalated by the token) and
 document subscriptions. The guest then sends `resumeDoc(path, revision, outstandingOpId)` for each
 document; the host replies with the missing history (`docCatchUp`), in which the guest recognises

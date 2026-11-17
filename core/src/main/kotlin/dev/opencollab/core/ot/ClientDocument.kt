@@ -59,6 +59,9 @@ class ClientDocument private constructor(
     /** The operation the next acknowledgement must be for. */
     val firstInFlightOpId: String? get() = inFlight.firstOrNull()?.opId
 
+    /** Maps an offset in the server text at [revision] to the local text (past our edits in flight). */
+    fun toLocalOffset(offset: Int): Int = inFlight.fold(offset) { at, sent -> sent.op.transformIndex(at) }
+
     /** Records a local edit; returns the operation to send now (null before the first sync). */
     fun applyLocal(op: TextOperation): Outgoing? {
         if (op.isNoop && op.baseLength == op.targetLength) return null

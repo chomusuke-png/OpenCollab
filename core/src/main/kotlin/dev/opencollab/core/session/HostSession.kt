@@ -11,6 +11,7 @@ import dev.opencollab.core.protocol.ChatEntry
 import dev.opencollab.core.protocol.ConsoleKind
 import dev.opencollab.core.protocol.ConsoleStream
 import dev.opencollab.core.protocol.RunTarget
+import dev.opencollab.core.protocol.TextRange
 import dev.opencollab.core.protocol.DocHistoryEntry
 import dev.opencollab.core.protocol.FileMutation
 import dev.opencollab.core.protocol.FileOpKind
@@ -662,9 +663,30 @@ class HostSession(
             return
         }
         peer.pendingPresence = null // superseded by this newer position
-        val broadcast = Message.PresenceBroadcast(peer.id, m.path, m.caret, m.selections)
+        val broadcast = mappedPresence(peer, m)
         peer.presence = broadcast
         broadcast(broadcast, except = peer)
+    }
+
+    /**
+     * The sender's caret and selections, mapped from the text it had (revision + its own edits) to
+     * the current text, like its edits: concurrent typing by others does not shift them.
+     */
+    private fun mappedPresence(peer: Peer, m: Message.Presence): Message.PresenceBroadcast {
+        val doc = m.path?.let { docs[it] }
+        if (doc != null && m.revision >= 0) {
+            val offsets = listOf(m.caret) + m.selections.flatMap { listOf(it.start, it.end) }
+            val mapped = doc.mapPositions(peer.id, m.revision, offsets)
+            if (mapped != null) {
+                val selections = m.selections.indices.map { i ->
+                    val a = mapped[1 + 2 * i]
+                    val b = mapped[2 + 2 * i]
+                    TextRange(minOf(a, b), maxOf(a, b))
+                }
+                return Message.PresenceBroadcast(peer.id, m.path, mapped[0], selections, doc.revision)
+            }
+        }
+        return Message.PresenceBroadcast(peer.id, m.path, m.caret, m.selections)
     }
 
     // ---- Chat --------------------------------------------------------------------------

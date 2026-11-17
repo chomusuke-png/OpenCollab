@@ -222,6 +222,36 @@ class HostSessionTest {
     }
 
     @Test
+    fun `carets and selections stay on their text while someone else types before them`() {
+        write(host, "doc.txt", "abcdef")
+        Harness(host).use { h ->
+            val alice = h.guest("alice", guestDir("alice"), presenceIntervalMillis = 0)
+            val bob = h.guest("bob", guestDir("bob"), presenceIntervalMillis = 0)
+            awaitState(alice, ClientState.CONNECTED)
+            awaitState(bob, ClientState.CONNECTED)
+            alice.open("doc.txt", "abcdef")
+            bob.open("doc.txt", "abcdef")
+            eventually { alice.client.isDocumentSynced("doc.txt") && bob.client.isDocumentSynced("doc.txt") }
+
+            // Bob moves his caret (abcd|ef, selecting "cd") before he receives what Alice typed at the start.
+            val hold = java.util.concurrent.CountDownLatch(1)
+            bob.edt.execute {
+                hold.await()
+                bob.client.updatePresence("doc.txt", 4, listOf(TextRange(2, 4)))
+            }
+            alice.type("doc.txt", 0, "XYZ")
+            eventually { h.session.documentText("doc.txt") == "XYZabcdef" }
+            hold.countDown()
+
+            // On Alice's screen they sit on the same letters: XYZabcd|ef, "cd" selected.
+            val bobId = bob.client.participantId
+            eventually { alice.presence[bobId] != null }
+            assertEquals(7, alice.presence[bobId]!!.caret)
+            assertEquals(listOf(TextRange(5, 7)), alice.presence[bobId]!!.selections)
+        }
+    }
+
+    @Test
     fun `chat floods are rate limited by the host`() {
         sampleProject()
         Harness(host).use { h ->

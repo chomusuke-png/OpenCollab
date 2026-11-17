@@ -143,6 +143,20 @@ class CollabClient(
     }
     private var presenceBatch: PresenceBatch? = null // inbound thread
 
+    /**
+     * A caret the host mapped to its revision, placed in our text: past our own edits still in
+     * flight (document executor). By then we have processed every edit the host had applied
+     * before it, since the channel is ordered, so its revision is ours.
+     */
+    private fun toLocal(m: Message.PresenceBroadcast): Message.PresenceBroadcast {
+        val doc = m.path?.let { docs[it] } ?: return m
+        if (!doc.isSynced || m.revision != doc.revision) return m
+        return m.copy(
+            caret = doc.toLocalOffset(m.caret),
+            selections = m.selections.map { TextRange(doc.toLocalOffset(it.start), doc.toLocalOffset(it.end)) },
+        )
+    }
+
     private fun queuePresence(m: Message.PresenceBroadcast) {
         presenceBatch?.let { batch ->
             synchronized(batch) {
@@ -153,7 +167,7 @@ class CollabClient(
         presenceBatch = batch
         docExecutor.execute {
             val carets = synchronized(batch) { batch.drawn = true; batch.latest.values.toList() }
-            carets.forEach(handler::onPresence)
+            carets.forEach { handler.onPresence(toLocal(it)) }
         }
     }
 
@@ -214,7 +228,8 @@ class CollabClient(
      * of a line).
      */
     fun updatePresence(path: String?, caret: Int, selections: List<TextRange>) {
-        val m = Message.Presence(path, caret, selections.take(MessageCodec.MAX_SELECTIONS))
+        val revision = path?.let { docs[it] }?.takeIf { it.isSynced }?.revision ?: -1
+        val m = Message.Presence(path, caret, selections.take(MessageCodec.MAX_SELECTIONS), revision)
         if (path != null && hasUnsentEdits(path)) {
             heldPresence = m
             return

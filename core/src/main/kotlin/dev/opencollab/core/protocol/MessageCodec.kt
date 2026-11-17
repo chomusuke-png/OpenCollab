@@ -140,7 +140,7 @@ object MessageCodec {
             is Message.DocumentUnavailable -> path(m.path)
             is Message.Presence -> {
                 m.path?.let(::path)
-                check(m.caret >= 0, "Invalid caret")
+                check(m.caret >= 0 && m.revision >= -1, "Invalid caret")
                 check(m.selections.size <= MAX_SELECTIONS, "Too many selections")
                 check(m.selections.all { it.start in 0..it.end }, "Invalid selection")
             }

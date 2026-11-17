@@ -120,6 +120,16 @@ class ServerDocument(
             history.filter { it.revision > baseRevision }.map { Bridged(it.op, it.revision) }
         }
 
+    /**
+     * Maps offsets (a caret, selection ends) [author] took in a context based on [baseRevision] to
+     * the current text, the same way as its operations. Null if they can no longer be mapped.
+     */
+    fun mapPositions(author: String, baseRevision: Int, offsets: List<Int>): List<Int>? {
+        if (baseRevision < 0 || baseRevision > revision) return null
+        val unseen = unseenBy(author, baseRevision) ?: return null
+        return offsets.map { offset -> unseen.fold(offset) { at, other -> other.op.transformIndex(at) }.coerceIn(0, text.length) }
+    }
+
     /** Entries with revision > [sinceRevision], or null if that part of history was pruned. */
     fun historySince(sinceRevision: Int): List<HistoryEntry>? {
         if (sinceRevision < checkpointRevision || sinceRevision > revision) return null

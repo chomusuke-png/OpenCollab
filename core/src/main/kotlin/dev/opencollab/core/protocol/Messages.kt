@@ -247,7 +247,13 @@ sealed class Message {
     // ---- Presence ---------------------------------------------------------------------
     /** Sent by a participant; the host stamps the sender and relays it as [PresenceBroadcast]. */
     @Serializable @SerialName("presence")
-    data class Presence(val path: String?, val caret: Int, val selections: List<TextRange>) : Message()
+    data class Presence(
+        val path: String?,
+        val caret: Int,
+        val selections: List<TextRange>,
+        /** Server revision of the document these offsets refer to (plus the sender's own edits sent); -1 if unknown. */
+        val revision: Int = -1,
+    ) : Message()
 
     @Serializable @SerialName("presenceBroadcast")
     data class PresenceBroadcast(
@@ -255,6 +261,8 @@ sealed class Message {
         val path: String?,
         val caret: Int,
         val selections: List<TextRange>,
+        /** Host revision the offsets were mapped to; -1 if they could not be mapped (sender's own coordinates). */
+        val revision: Int = -1,
     ) : Message()
 
     /** Either side may ping; the other answers with a [Pong] carrying the same nonce. */

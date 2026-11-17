@@ -102,6 +102,12 @@ latest value on the trailing edge — `PresenceThrottler`). The host rate-limits
 participant (120/s; beyond that only the latest position is kept and relayed as soon as the limit allows, so the final caret is never lost), stamps the sender id (no spoofing), relays it to everybody else, sends current
 presence to newcomers and broadcasts `participantLeft` on disconnect, which clears the carets.
 
+Offsets are mapped like edits, so carets and selections stay on their letters while others type
+before them: `presence` carries the revision the sender's offsets refer to (its own sent edits
+included); the host maps them through the sender's bridge (the edits it had not seen) to its
+current revision and stamps that revision on `presenceBroadcast`; each receiver then maps them
+past its own edits still in flight. A caret is only sent after the edits it follows.
+
 ## Reconnect
 
 Guests reconnect with exponential backoff (1 s … 30 s). The plugin gives up after 8 attempts (about two minutes) and leaves the session automatically, as it does when the host ends the session or removes the guest. `hello` carries the resume key; within

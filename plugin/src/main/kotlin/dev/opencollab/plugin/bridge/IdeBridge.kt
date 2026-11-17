@@ -61,6 +61,9 @@ interface BridgeListener {
     fun onParticipantsChanged(participants: List<ParticipantInfo>) {}
     fun onRoleChanged(role: Role) {}
     fun onLog(message: String) {}
+    /** The session has been running for [sessionAgeMillis] (sent by the host on every (re)connect). */
+    fun onSessionAge(sessionAgeMillis: Long) {}
+    fun onLatencies(millis: Map<String, Int>) {}
 }
 
 /**
@@ -170,8 +173,11 @@ class IdeBridge(
     }
 
     override fun onWelcome(welcome: Message.Welcome) {
+        listener.onSessionAge(welcome.sessionAgeMillis)
         if (!isHost) edtExecutor.execute { setAllReadOnly(welcome.role == Role.VIEWER) }
     }
+
+    override fun onLatencies(millis: Map<String, Int>) = listener.onLatencies(millis)
 
     override fun onParticipantsChanged(participants: List<ParticipantInfo>) {
         this.participants.clear()

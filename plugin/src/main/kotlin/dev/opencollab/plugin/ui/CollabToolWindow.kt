@@ -28,7 +28,10 @@ import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.ui.dsl.builder.rows
+import com.intellij.openapi.util.Disposer
 import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.UIUtil
+import javax.swing.Timer
 import dev.opencollab.core.protocol.ParticipantInfo
 import dev.opencollab.core.protocol.Role
 import dev.opencollab.plugin.OpenCollabBundle.message
@@ -75,6 +78,7 @@ class CollabToolWindowFactory : ToolWindowFactory, DumbAware {
 class CollabPanel(private val project: Project, parent: Disposable) : JPanel(BorderLayout()) {
     private val service = CollabSessionService.getInstance(project)
     private val status = JBLabel()
+    private val sessionTime = JBLabel().apply { foreground = UIUtil.getContextHelpForeground() }
     private val hostButton = JButton(message("panel.start.hosting"), AllIcons.Actions.Execute)
     private val joinButton = JButton(message("panel.join"), AllIcons.Actions.Download)
     private val leaveButton = JButton(message("panel.leave"), AllIcons.Actions.Suspend)
@@ -99,7 +103,7 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         val invites = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply { add(copyEditor); add(copyViewer) }
         val top = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            add(row(status)); add(row(buttons)); add(row(invites)); add(row(endpoints))
+            add(row(status)); add(row(sessionTime)); add(row(buttons)); add(row(invites)); add(row(endpoints))
         }
         add(top, BorderLayout.NORTH)
 
@@ -130,7 +134,19 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         copyViewer.addActionListener { copyInvite(editor = false) }
 
         service.addListener({ SwingUtilities.invokeLater(::refresh) }, parent)
+        val clock = Timer(1000) { updateSessionTime() }.apply { start() }
+        Disposer.register(parent) { clock.stop() }
         refresh()
+    }
+
+    /** "Session time: 01:23:45", counted from when the host started the session. */
+    private fun updateSessionTime() {
+        val started = service.sessionStartedAt
+        sessionTime.isVisible = started != null
+        if (started == null) return
+        val seconds = ((System.currentTimeMillis() - started) / 1000).coerceAtLeast(0)
+        val text = "%02d:%02d:%02d".format(seconds / 3600, seconds / 60 % 60, seconds % 60)
+        sessionTime.text = message("panel.session.time", text)
     }
 
     private fun row(c: JComponent) = JPanel(BorderLayout()).apply {
@@ -211,8 +227,13 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         model.clear()
         service.participants.forEach(model::addElement)
         selectedId?.let { id -> (0 until model.size()).firstOrNull { model[it].id == id }?.let(list::setSelectedIndex) }
-        logArea.text = service.log().joinToString("\n")
-        logArea.caretPosition = logArea.document.length
+        updateSessionTime()
+        // Ping updates refresh the panel every 2 s; leave the log (and where it is scrolled) alone unless it changed.
+        val log = service.log().joinToString("\n")
+        if (logArea.text != log) {
+            logArea.text = log
+            logArea.caretPosition = logArea.document.length
+        }
     }
 
     private inner class ParticipantRenderer : ColoredListCellRenderer<ParticipantInfo>() {
@@ -221,11 +242,17 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
             append(value.displayName)
             if (value.id == service.ownParticipantId()) append(message("panel.you"), SimpleTextAttributes.GRAYED_ATTRIBUTES)
             append("  " + roleName(value.role), SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
+            // Round-trip time to the host; the host's own row has none.
+            if (value.role != Role.HOST) service.latencies[value.id]?.let { ms ->
+                append("  $ms ms", if (ms >= SLOW_PING_MS) SimpleTextAttributes.ERROR_ATTRIBUTES else SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
+            }
         }
     }
 
     private companion object {
         const val WRAP_KEY = "dev.opencollab.activity.wrap"
+        /** Pings at or above this are shown in red. */
+        const val SLOW_PING_MS = 250
     }
 
     private class ColorIcon(private val color: java.awt.Color) : Icon {

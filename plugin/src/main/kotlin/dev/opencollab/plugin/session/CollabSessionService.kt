@@ -85,6 +85,12 @@ class CollabSessionService(private val project: Project) : Disposable {
         private set
     @Volatile var myRole: Role? = null
         private set
+    /** Wall-clock time the session started (from the host's session age), or null when not in one. */
+    @Volatile var sessionStartedAt: Long? = null
+        private set
+    /** Round-trip time to the host per participant id, in ms. */
+    @Volatile var latencies: Map<String, Int> = emptyMap()
+        private set
 
     fun addListener(l: Listener, parent: Disposable) {
         listeners += l
@@ -136,6 +142,17 @@ class CollabSessionService(private val project: Project) : Disposable {
                 }
                 fire()
             }
+        }
+        // Ignored once Idle: a message still in flight after leaving must not bring them back.
+        override fun onSessionAge(sessionAgeMillis: Long) {
+            if (mode == Mode.Idle) return
+            sessionStartedAt = System.currentTimeMillis() - sessionAgeMillis
+            fire()
+        }
+        override fun onLatencies(millis: Map<String, Int>) {
+            if (mode == Mode.Idle) return
+            latencies = millis
+            fire()
         }
         override fun onParticipantsChanged(participants: List<ParticipantInfo>) {
             if (mode is Mode.Joined) { this@CollabSessionService.participants = participants; fire() }
@@ -419,6 +436,8 @@ class CollabSessionService(private val project: Project) : Disposable {
         mode = Mode.Idle
         participants = emptyList()
         myRole = null
+        sessionStartedAt = null
+        latencies = emptyMap()
         status = message("status.idle")
         fire()
     }

@@ -135,6 +135,8 @@ class CollabClient(
     private var initialSync = false
     private val syncedPaths = ArrayList<String>()
     private val receivedPerRequest = HashMap<String, Long>()
+    /** Files written by each restore request (kept apart from the initial sync's [syncedPaths]). */
+    private val restoredPaths = HashMap<String, MutableList<String>>()
 
     // Document state (document executor only).
     private val docs = HashMap<String, ClientDocument>()
@@ -365,6 +367,7 @@ class CollabClient(
         needsResume = true // before welcomed: no edit may slip out between reconnecting and catching up
         welcomed = false
         receivedPerRequest.clear()
+        restoredPaths.clear()
         mirror?.discardPartials()
         if (userClosed || state == ClientState.DISCONNECTED) return
         handler.onLog("Connection lost: $reason")
@@ -531,13 +534,13 @@ class CollabClient(
         val ws = mirror ?: return
         val data = try { MessageCodec.decodeBase64(m.dataBase64) } catch (e: ProtocolException) { ByteArray(0) }
         try {
-            val complete = ws.acceptChunk(m.path, m.offset, data, m.last, m.sha256, sharingRules.maxFileBytes) ?: return
+            val complete = ws.acceptChunk(m.requestId, m.path, m.offset, data, m.last, m.sha256, sharingRules.maxFileBytes) ?: return
             if (openPaths.contains(m.path)) {
                 java.nio.file.Files.deleteIfExists(complete.file) // the open document is synchronised via OT instead
                 return
             }
             ws.writeReceived(complete)
-            syncedPaths += m.path
+            if (isRestore(m.requestId)) restoredPaths.getOrPut(m.requestId) { mutableListOf() } += m.path else syncedPaths += m.path
         } catch (e: Exception) {
             handler.onLog("Failed to write ${m.path}: ${e.message}")
         } finally {
@@ -551,15 +554,18 @@ class CollabClient(
     private fun onFilesDone(m: Message.FilesDone) {
         val ws = mirror ?: return
         receivedPerRequest.remove(m.requestId)
-        if (m.requestId.startsWith("restore-")) {
+        if (m.failed.isNotEmpty()) handler.onLog("Could not download from the host now: ${m.failed.take(5).joinToString()}${if (m.failed.size > 5) " …" else ""}")
+        if (isRestore(m.requestId)) {
+            // Only files the host does not have are removed; ones it failed to send are kept.
             for (missing in m.missing) {
                 if (ws.isTracked(missing)) runCatching { ws.deleteStale(missing) }
             }
             runCatching { ws.saveState() }
-            handler.onFilesChanged(syncedPaths.toList() + m.missing, initial = false)
-            syncedPaths.clear()
+            handler.onFilesChanged(restoredPaths.remove(m.requestId).orEmpty() + m.missing, initial = false)
             return
         }
+        // Files the host could not send during the sync: one more attempt.
+        if (m.failed.isNotEmpty()) send(Message.RequestFiles("restore-${requestCounter.incrementAndGet()}", m.failed))
         if (manifestSeq > ws.fileEventSeq) ws.setFileEventSeq(manifestSeq)
         runCatching { ws.saveState() }
         val changed = syncedPaths.toList()
@@ -569,6 +575,8 @@ class CollabClient(
         handler.onFilesChanged(changed, initial)
         setState(ClientState.CONNECTED, "Connected")
     }
+
+    private fun isRestore(requestId: String) = requestId.startsWith("restore-")
 
     private fun onFileEvent(e: Message.FileEvent) {
         val ws = mirror ?: return
@@ -695,11 +703,11 @@ class CollabClient(
             is Message.OpRejected -> {
                 val doc = docs[m.path] ?: return
                 if (m.path in catchingUp) { // already recovering; a refusal still drops our edits
-                    if (m.reason == "forbidden") discardOnResync += m.path
+                    if (m.reason == "forbidden" || m.reason == "too-large") discardOnResync += m.path
                     return
                 }
                 handler.onLog("Edit to ${m.path} was refused (${m.reason}); resynchronising")
-                forceResync(m.path, doc, discard = m.reason == "forbidden")
+                forceResync(m.path, doc, discard = m.reason == "forbidden" || m.reason == "too-large")
             }
             is Message.DocumentUnavailable -> {
                 docs.remove(m.path)

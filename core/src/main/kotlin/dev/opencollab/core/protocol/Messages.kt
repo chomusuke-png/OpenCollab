@@ -218,7 +218,13 @@ sealed class Message {
     ) : Message()
 
     @Serializable @SerialName("filesDone")
-    data class FilesDone(val requestId: String, val missing: List<String>) : Message()
+    data class FilesDone(
+        val requestId: String,
+        /** Paths that do not exist (or are not shared) on the host. */
+        val missing: List<String>,
+        /** Paths that exist but could not be sent now (read error, too many transfers): try again later. */
+        val failed: List<String> = emptyList(),
+    ) : Message()
 
     /** Flow control: total bytes of request [requestId] written by the receiver so far. */
     @Serializable @SerialName("chunkAck")

@@ -1,6 +1,7 @@
 package dev.opencollab.core.session
 
 import dev.opencollab.core.files.Hashes
+import dev.opencollab.core.files.SharingRules
 import dev.opencollab.core.protocol.ConsoleStream
 import dev.opencollab.core.protocol.Features
 import dev.opencollab.core.protocol.VcsChange
@@ -151,8 +152,8 @@ class HostSessionTest {
             val request = h.runRequests.single()
             assertEquals("alice", request.displayName)
             assertEquals("Build Project", request.target?.name)
-            assertTrue(h.session.answerRun(request.participantId, request.requestId, accepted = true))
-            assertFalse(h.session.answerRun(request.participantId, request.requestId, accepted = true), "answered only once")
+            assertTrue(h.session.answerRun(request.participantId, request.requestId, accepted = true).get(5, java.util.concurrent.TimeUnit.SECONDS))
+            assertFalse(h.session.answerRun(request.participantId, request.requestId, accepted = true).get(5, java.util.concurrent.TimeUnit.SECONDS), "answered only once")
             eventually { alice.runResponses.any { it.requestId == asked } }
             assertTrue(alice.runResponses.single { it.requestId == asked }.accepted)
         }
@@ -218,7 +219,7 @@ class HostSessionTest {
             val request = h.runRequests.single()
             assertEquals("./gradlew test", request.command)
             assertNull(request.target)
-            assertTrue(h.session.answerRun(request.participantId, request.requestId, accepted = false))
+            assertTrue(h.session.answerRun(request.participantId, request.requestId, accepted = false).get(5, java.util.concurrent.TimeUnit.SECONDS))
             eventually { alice.runResponses.any { it.requestId == asked } }
             assertEquals(RunRefusal.REFUSED, alice.runResponses.single().reason)
 
@@ -242,7 +243,7 @@ class HostSessionTest {
             eventually { alice.runResponses.any { it.requestId == asked } }
             assertEquals(RunRefusal.NO_ANSWER, alice.runResponses.single().reason)
             val request = h.runRequests.single()
-            assertFalse(h.session.answerRun(request.participantId, request.requestId, accepted = true))
+            assertFalse(h.session.answerRun(request.participantId, request.requestId, accepted = true).get(5, java.util.concurrent.TimeUnit.SECONDS))
         }
     }
 
@@ -629,8 +630,70 @@ class HostSessionTest {
         }
         val ws = dev.opencollab.core.files.MirrorWorkspace(guestDir("x"))
         org.junit.jupiter.api.assertThrows<java.io.IOException> {
-            ws.acceptChunk("a.txt", 0, "abc".toByteArray(), true, "deadbeef", 100)
+            ws.acceptChunk("r1", "a.txt", 0, "abc".toByteArray(), true, "deadbeef", 100)
         }
         assertNull(ws.localHash("a.txt"))
+    }
+
+    @Test
+    fun `demoting an editor refuses their pending run requests`() {
+        sampleProject()
+        Harness(host).use { h ->
+            val alice = h.guest("alice", guestDir("alice"))
+            awaitState(alice, ClientState.CONNECTED)
+            h.session.setRunTargets(listOf(RunTarget("build", "Build Project", RunTargetKind.BUILD)))
+            eventually { alice.runTargets.isNotEmpty() }
+            val asked = alice.client.requestRun("build")!!
+            eventually { h.runRequests.size == 1 }
+            val request = h.runRequests.single()
+            h.session.setRole(alice.client.participantId, Role.VIEWER)
+            eventually { alice.runResponses.any { it.requestId == asked } }
+            assertEquals(RunRefusal.VIEWER, alice.runResponses.single().reason)
+            assertFalse(h.session.answerRun(request.participantId, request.requestId, accepted = true).get(5, java.util.concurrent.TimeUnit.SECONDS))
+        }
+    }
+
+    @Test
+    fun `edits that would make a document exceed the size limit are refused and rolled back`() {
+        sampleProject()
+        Harness(host, rules = SharingRules(maxFileBytes = 40)).use { h ->
+            val alice = h.guest("alice", guestDir("alice"))
+            awaitState(alice, ClientState.CONNECTED)
+            alice.open("README.md", "# Demo\n")
+            eventually { alice.client.isDocumentSynced("README.md") }
+            alice.type("README.md", 7, "x".repeat(100))
+            eventually { alice.text("README.md") == "# Demo\n" }
+            assertEquals("# Demo\n", h.session.query { documentText("README.md") })
+            alice.type("README.md", 7, "ok\n") // small edits still work
+            eventually { h.session.query { documentText("README.md") } == "# Demo\nok\n" }
+        }
+    }
+
+    @Test
+    fun `file requests beyond the concurrent transfer limit wait their turn instead of failing`() {
+        sampleProject()
+        (1..12).forEach { write(host, "docs/f$it.txt", "file $it\n") }
+        Harness(host, config = HostConfig("demo", maxTransfersPerParticipant = 1)).use { h ->
+            val dir = guestDir("alice")
+            val alice = h.guest("alice", dir)
+            awaitState(alice, ClientState.CONNECTED)
+            (1..12).forEach { Files.delete(dir.resolve("docs/f$it.txt")) }
+            (1..12).forEach { alice.client.restoreFromHost(listOf("docs/f$it.txt")) }
+            eventually { (1..12).all { Files.exists(dir.resolve("docs/f$it.txt")) } }
+            assertTrue(alice.log.none { it.contains("Could not download") }, alice.log.toString())
+        }
+    }
+
+    @Test
+    fun `the same file received by two requests at once is assembled separately`() {
+        val ws = dev.opencollab.core.files.MirrorWorkspace(guestDir("mirror"))
+        val content = "hello world".toByteArray()
+        val sha = Hashes.sha256(content)
+        assertNull(ws.acceptChunk("r1", "a.txt", 0, content.copyOf(5), false, "", 100))
+        val second = ws.acceptChunk("r2", "a.txt", 0, content, true, sha, 100)!!
+        ws.writeReceived(second)
+        val first = ws.acceptChunk("r1", "a.txt", 5, content.copyOfRange(5, content.size), true, sha, 100)!!
+        ws.writeReceived(first)
+        assertEquals("hello world", Files.readString(ws.root.resolve("a.txt")))
     }
 }

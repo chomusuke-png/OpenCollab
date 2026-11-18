@@ -54,6 +54,8 @@ class GuestRunMirror(
 ) : CollabSessionService.ConsoleListener, Disposable {
     private class Run(val title: String, var handler: RemoteProcessHandler, var descriptor: RunContentDescriptor) {
         var tests = false
+        /** The test view could not be created: test events are dropped, never printed as text. */
+        var testViewFailed = false
         /** Output so far, replayed when the tab turns into a test view. */
         val transcript = ArrayList<Pair<ConsoleStream, String>>()
         var transcriptChars = 0
@@ -91,7 +93,7 @@ class GuestRunMirror(
     /** Test events (service messages): the first ones turn the run's tab into IntelliJ's test view. */
     override fun tests(console: SharedConsole, text: String) {
         val run = runs[console.id] ?: return
-        if (!run.tests && !showAsTests(run)) return
+        if (run.testViewFailed || (!run.tests && !showAsTests(run))) return
         run.handler.notifyTextAvailable(text, ProcessOutputTypes.STDOUT)
     }
 
@@ -157,6 +159,7 @@ class GuestRunMirror(
             SMTestRunnerConnectionUtil.createAndAttachConsole(TEST_FRAMEWORK, handler, properties)
         } catch (e: Exception) {
             run.tests = true // keep the plain console; test events are not shown as text
+            run.testViewFailed = true
             return false
         }
         handler.startNotify()

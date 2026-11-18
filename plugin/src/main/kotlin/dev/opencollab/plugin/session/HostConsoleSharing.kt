@@ -36,6 +36,13 @@ import com.intellij.execution.process.ProcessHandler
 import com.intellij.execution.process.ProcessListener
 import com.intellij.execution.process.ProcessOutputTypes
 import com.intellij.execution.runners.ExecutionEnvironment
+import com.intellij.execution.runners.ExecutionEnvironmentBuilder
+import com.intellij.openapi.ui.DialogBuilder
+import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextArea
+import java.awt.BorderLayout
+import javax.swing.JPanel
 import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -82,8 +89,6 @@ class HostConsoleSharing(
     @Volatile private var targets: Map<String, RunnerAndConfigurationSettings?> = emptyMap()
     /** Participants this session's user allowed to run anything without asking again. */
     private val alwaysAllowed = ConcurrentHashMap.newKeySet<String>()
-    /** Run configurations launched for a guest, so their console says who asked. */
-    private val launchedFor = ConcurrentHashMap<String, String>()
     private val projectDir = ProjectDirMacro(root)
     /** Shared processes → console id, so test events find their console (weak: handlers end). */
     private val consoleOf = Collections.synchronizedMap(WeakHashMap<ProcessHandler, String>())
@@ -134,8 +139,11 @@ class HostConsoleSharing(
         val map = LinkedHashMap<String, RunnerAndConfigurationSettings?>()
         val list = mutableListOf(RunTarget(BUILD_ID, message("console.build.project"), RunTargetKind.BUILD))
         map[BUILD_ID] = null
-        RunManager.getInstance(project).allSettings.filter { !it.isTemporary }.forEachIndexed { i, settings ->
-            val id = "cfg-$i"
+        RunManager.getInstance(project).allSettings.filter { !it.isTemporary }.forEach { settings ->
+            // Stable per configuration: a request keeps meaning the same configuration even if
+            // others are added or removed before the host answers.
+            val id = targetId(settings)
+            if (id in map) return@forEach
             map[id] = settings
             list += RunTarget(id, settings.name.take(200).ifBlank { "?" }, RunTargetKind.CONFIGURATION)
         }
@@ -163,42 +171,82 @@ class HostConsoleSharing(
             }
             val notification = NotificationGroupManager.getInstance().getNotificationGroup("OpenCollab")
                 .createNotification(message(if (command != null) "command.request.title" else "console.request.title"), text, NotificationType.WARNING)
-            notification.addAction(NotificationAction.createSimpleExpiring(message("console.request.allow")) { grant(request) })
+            notification.addAction(NotificationAction.createSimpleExpiring(message("console.request.allow")) {
+                // A notification can cut a long command short: show all of it before running it.
+                if (command == null || confirmCommand(request.displayName, command)) grant(request) else deny(request)
+            })
             if (command == null) notification.addAction(NotificationAction.createSimpleExpiring(message("console.request.always")) {
                 alwaysAllowed += request.participantId
                 grant(request)
             })
-            notification.addAction(NotificationAction.createSimpleExpiring(message("console.request.deny")) {
-                session.answerRun(request.participantId, request.requestId, accepted = false)
-            })
+            notification.addAction(NotificationAction.createSimpleExpiring(message("console.request.deny")) { deny(request) })
             notification.notify(project)
         }, ModalityState.nonModal())
     }
 
-    /** EDT. Runs the target only if the request is still open (not expired, requester still here). */
+    private fun deny(request: RunRequestInfo) {
+        session.answerRun(request.participantId, request.requestId, accepted = false)
+    }
+
+    /** EDT. The full command, in a dialog where nothing can hide; true if the user runs it. */
+    private fun confirmCommand(who: String, command: String): Boolean {
+        val area = JBTextArea(command).apply {
+            isEditable = false
+            lineWrap = true
+            rows = 6
+            columns = 60
+        }
+        val builder = DialogBuilder(project)
+            .title(message("command.request.title"))
+            .centerPanel(JPanel(BorderLayout(0, 8)).apply {
+                add(JBLabel(message("command.confirm", who, command.length)), BorderLayout.NORTH)
+                add(JBScrollPane(area), BorderLayout.CENTER)
+            })
+        builder.addOkAction().setText(message("console.request.allow"))
+        builder.addCancelAction()
+        return builder.showAndGet()
+    }
+
+    /**
+     * EDT. Runs the target only if the session confirms the request is still open (not expired,
+     * requester still here and still an editor). The answer comes back asynchronously: the
+     * session thread may itself be waiting for the EDT.
+     */
     private fun grant(request: RunRequestInfo) {
         val command = request.command
         val target = request.target
-        if (command == null && (target == null || !targets.containsKey(target.id))) {
-            session.answerRun(request.participantId, request.requestId, accepted = false)
+        val settings = target?.let { targets[it.id] }
+        // The configuration must still exist and be the one the user was shown.
+        if (command == null && (target == null || !targets.containsKey(target.id) || (settings != null && settings.name.take(200) != target.name))) {
+            deny(request)
             return
         }
-        if (!session.answerRun(request.participantId, request.requestId, accepted = true)) {
-            log(message("console.request.expired", request.displayName, request.label))
-            return
+        session.answerRun(request.participantId, request.requestId, accepted = true).thenAccept { granted ->
+            ApplicationManager.getApplication().invokeLater({
+                if (project.isDisposed) return@invokeLater
+                if (!granted) {
+                    log(message("console.request.expired", request.displayName, request.label))
+                    return@invokeLater
+                }
+                log(message("console.request.running", request.displayName, request.label))
+                when {
+                    command != null -> runCommand(command, request.participantId)
+                    settings == null -> ProjectTaskManager.getInstance(project).buildAllModules()
+                    else -> launch(settings, request.participantId)
+                }
+            }, ModalityState.nonModal())
         }
-        log(message("console.request.running", request.displayName, request.label))
-        if (command != null) {
-            runCommand(command, request.participantId)
-            return
-        }
-        val settings = targets[target!!.id]
-        if (settings == null) {
-            ProjectTaskManager.getInstance(project).buildAllModules()
-        } else {
-            launchedFor[settings.uniqueID] = request.participantId
+    }
+
+    /** Runs [settings] with the requester attached to this one launch (not to the configuration). */
+    private fun launch(settings: RunnerAndConfigurationSettings, requestedBy: String) {
+        val environment = ExecutionEnvironmentBuilder.createOrNull(DefaultRunExecutor.getRunExecutorInstance(), settings)?.build()
+        if (environment == null) {
             ProgramRunnerUtil.executeConfiguration(settings, DefaultRunExecutor.getRunExecutorInstance())
+            return
         }
+        environment.putUserData(REQUESTED_BY, requestedBy)
+        ProgramRunnerUtil.executeConfiguration(environment, false, true)
     }
 
     // ---- Commands requested by guests ---------------------------------------------------------
@@ -227,7 +275,7 @@ class HostConsoleSharing(
     // ---- Processes ------------------------------------------------------------------------
 
     private fun shareProcess(env: ExecutionEnvironment, handler: ProcessHandler) {
-        val requestedBy = env.runnerAndConfigurationSettings?.uniqueID?.let { launchedFor.remove(it) }
+        val requestedBy = env.getUserData(REQUESTED_BY)
         val title = runCatching { env.runProfile.name }.getOrNull()?.takeIf { it.isNotBlank() } ?: "?"
         shareHandler(title, handler, requestedBy)
     }
@@ -396,6 +444,13 @@ class HostConsoleSharing(
     }
 
     companion object {
+        /** Who asked for a run, on the ExecutionEnvironment of that one launch. */
+        private val REQUESTED_BY = Key.create<String>("opencollab.requestedBy")
+
+        /** A protocol id for a run configuration that stays the same while it exists. */
+        internal fun targetId(settings: RunnerAndConfigurationSettings): String =
+            "cfg-" + java.security.MessageDigest.getInstance("SHA-256").digest(settings.uniqueID.toByteArray()).take(12).joinToString("") { "%02x".format(it) }
+
         const val BUILD_ID = "build"
         /** Locations in shared test events: `opencollab://relative/path:line`. */
         const val TEST_PROTOCOL = "opencollab"

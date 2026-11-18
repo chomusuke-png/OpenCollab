@@ -100,6 +100,10 @@ data class HostConfig(
     /** Most recent consoles, and characters of each, replayed to participants who join later. */
     val consoleReplayCount: Int = 5,
     val consoleReplayChars: Int = 256 * 1024,
+    /** File requests streamed to one participant at the same time; later ones wait in a queue. */
+    val maxTransfersPerParticipant: Int = 4,
+    /** File requests of one participant waiting for a transfer slot; beyond that they fail. */
+    val maxQueuedTransfersPerParticipant: Int = 256,
     /** Optional [Features] this host offers (announced in Welcome, used only with guests announcing them too). */
     val features: Set<String> = Features.ALL.toSet(),
 )
@@ -137,6 +141,8 @@ class HostSession(
         var resumeKey: String = ""
         val subscriptions = HashSet<String>()
         val transfers = java.util.concurrent.ConcurrentHashMap<String, Transfer>()
+        /** File requests waiting for a free transfer slot (session thread). */
+        val queuedTransfers = ArrayDeque<Message.RequestFiles>()
         var presence: Message.PresenceBroadcast? = null
         val presenceLimiter = RateLimiter(config.presencePerSecond, scheduler)
         val messageLimiter = RateLimiter(config.messagesPerSecond, scheduler)
@@ -188,7 +194,7 @@ class HostSession(
     private val consoles = LinkedHashMap<String, ConsoleLog>()
     /** Latest host IDE state per message type (debugger, breakpoints, VCS, code style), for newcomers. */
     private val ideState = LinkedHashMap<Class<out Message>, Message>()
-    private var closed = false
+    @Volatile private var closed = false
     private val startedAt = scheduler.nowMillis()
 
     val endpointsInfo = mutableListOf<String>()
@@ -414,6 +420,7 @@ class HostSession(
         val info = peer.info ?: return
         if (info.role == Role.HOST || info.role == role) return
         peer.info = info.copy(role = role)
+        if (!role.canEdit) refusePendingRuns(peer, RunRefusal.VIEWER)
         broadcast(Message.RoleChanged(participantId, role))
         listener.onLog("${info.displayName} is now $role")
         listener.onParticipantsChanged(participants())
@@ -427,12 +434,27 @@ class HostSession(
      * Each request runs on its own transfer thread; the SHA-256 travels with the last chunk.
      */
     private fun sendFiles(peer: Peer, m: Message.RequestFiles) {
+        peer.transfers.remove(m.requestId)?.cancel()
+        peer.queuedTransfers.removeIf { it.requestId == m.requestId }
+        // Each transfer holds a thread and an open file: a participant gets a few at a time.
+        if (peer.transfers.size >= config.maxTransfersPerParticipant) {
+            if (peer.queuedTransfers.size >= config.maxQueuedTransfersPerParticipant) {
+                peer.send(Message.FilesDone(m.requestId, emptyList(), failed = m.paths.distinct()))
+            } else {
+                peer.queuedTransfers.addLast(m)
+            }
+            return
+        }
+        startTransfer(peer, m)
+    }
+
+    private fun startTransfer(peer: Peer, m: Message.RequestFiles) {
         val paths = m.paths.distinct()
         val transfer = Transfer()
-        peer.transfers[m.requestId]?.cancel()
         peer.transfers[m.requestId] = transfer
         transferPool.execute {
             val missing = ArrayList<String>()
+            val failed = ArrayList<String>()
             var sent = 0L
             try {
                 for ((index, path) in paths.withIndex()) {
@@ -441,16 +463,17 @@ class HostSession(
                     try {
                         sent = streamFile(peer, m.requestId, path, file, transfer, sent)
                     } catch (e: TransferAborted) {
-                        missing += paths.subList(index, paths.size)
+                        failed += paths.subList(index, paths.size)
                         break
                     } catch (e: java.io.IOException) {
-                        missing += path
+                        failed += path // exists but could not be read now: not the same as missing
                     }
                 }
             } finally {
                 exec.execute {
                     peer.transfers.remove(m.requestId, transfer)
-                    peer.send(Message.FilesDone(m.requestId, missing))
+                    peer.send(Message.FilesDone(m.requestId, missing, failed))
+                    if (peer.open && !closed) peer.queuedTransfers.removeFirstOrNull()?.let { startTransfer(peer, it) }
                 }
             }
         }
@@ -600,13 +623,15 @@ class HostSession(
         docs[path]?.let { return it }
         if (!files.rules.isShared(path)) return null
         val text = documentSource.loadForSharing(path) ?: return null
-        if (text.length > minOf(files.rules.maxFileBytes, MessageCodec.MAX_DOCUMENT_CHARS.toLong())) return null
-        val doc = ServerDocument(path, text, maxHistory = config.maxHistoryPerDocument)
+        if (text.length > maxDocumentChars()) return null
+        val doc = ServerDocument(path, text, maxHistory = config.maxHistoryPerDocument, maxLength = maxDocumentChars())
         docs[path] = doc
         // The host's own editor bridge always follows shared documents.
         peers.values.filter { it.role == Role.HOST }.forEach { it.subscriptions += path }
         return doc
     }
+
+    private fun maxDocumentChars(): Int = minOf(files.rules.maxFileBytes, MessageCodec.MAX_DOCUMENT_CHARS.toLong()).toInt()
 
     private fun openDocument(peer: Peer, path: String) {
         val doc = loadDocument(path)
@@ -655,16 +680,17 @@ class HostSession(
         val op = MessageCodec.opFromJson(m.op)
         when (val result = doc.receive(peer.id, m.opId, m.baseRevision, op)) {
             is ServerDocument.Result.Applied -> {
-                if (doc.text.length > files.rules.maxFileBytes) {
-                    listener.onLog("Document ${m.path} exceeds the size limit")
-                }
                 peer.send(Message.OpAck(m.path, m.opId, result.revision))
                 val remote = Message.RemoteOp(m.path, m.opId, peer.id, result.revision, MessageCodec.opToJson(result.op))
                 broadcastToSubscribers(m.path, remote, except = peer)
             }
             is ServerDocument.Result.Duplicate -> peer.send(Message.OpAck(m.path, m.opId, result.revision))
             is ServerDocument.Result.Rejected -> peer.send(
-                Message.OpRejected(m.path, m.opId, if (result.reason == ServerDocument.RejectReason.STALE) "stale" else "invalid"),
+                Message.OpRejected(m.path, m.opId, when (result.reason) {
+                    ServerDocument.RejectReason.STALE -> "stale"
+                    ServerDocument.RejectReason.TOO_LARGE -> "too-large"
+                    ServerDocument.RejectReason.INVALID -> "invalid"
+                }),
             )
         }
     }
@@ -890,16 +916,39 @@ class HostSession(
     }
 
     /**
-     * The host's answer to a run request. Returns true only if the request was still waiting
-     * (not expired, requester still connected): run the target only then. Blocks briefly.
+     * The host's answer to a run request. Completes with true if the answer was delivered: for an
+     * acceptance, only if the request was still waiting (not expired, requester still connected
+     * and still an editor): run the target only then. Never blocks the caller (the IDE calls it on the EDT, which the session thread may be
+     * waiting for).
      */
-    fun answerRun(participantId: String, requestId: String, accepted: Boolean): Boolean = query {
-        val pending = pendingRuns.remove("$participantId/$requestId") ?: return@query false
-        pending.expiry.cancel()
-        val peer = pending.peer
-        if (!peer.open) return@query false
-        peer.send(Message.RunResponse(requestId, accepted, if (accepted) null else RunRefusal.REFUSED))
-        true
+    fun answerRun(participantId: String, requestId: String, accepted: Boolean): java.util.concurrent.CompletableFuture<Boolean> {
+        val result = java.util.concurrent.CompletableFuture<Boolean>()
+        exec.execute {
+            val pending = pendingRuns.remove("$participantId/$requestId")
+            if (pending == null) { result.complete(false); return@execute }
+            pending.expiry.cancel()
+            val peer = pending.peer
+            if (!peer.open) { result.complete(false); return@execute }
+            // The role may have changed since the request: only a current editor gets it run.
+            val granted = accepted && peer.role.canEdit && peer.role != Role.HOST
+            val reason = when {
+                granted -> null
+                accepted -> RunRefusal.VIEWER
+                else -> RunRefusal.REFUSED
+            }
+            peer.send(Message.RunResponse(requestId, granted, reason))
+            result.complete(granted || !accepted) // a refusal always goes through
+        }
+        if (closed) result.complete(false)
+        return result
+    }
+
+    private fun refusePendingRuns(peer: Peer, reason: String) {
+        val keys = pendingRuns.filterValues { it.peer === peer }.keys
+        for (key in keys) {
+            pendingRuns.remove(key)?.expiry?.cancel()
+            peer.send(Message.RunResponse(key.substringAfter('/'), false, reason))
+        }
     }
 
     // ---- Latency -----------------------------------------------------------------------
@@ -945,6 +994,7 @@ class HostSession(
         peer.handshakeTimer?.cancel()
         peer.presenceFlush?.cancel()
         peer.transfers.values.forEach { it.cancel() }
+        peer.queuedTransfers.clear()
         // Their unanswered run requests can no longer be granted.
         pendingRuns.values.removeIf { pending -> (pending.peer === peer).also { if (it) pending.expiry.cancel() } }
         peers.remove(peer.connection)

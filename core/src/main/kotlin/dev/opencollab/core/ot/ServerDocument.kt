@@ -27,6 +27,8 @@ class ServerDocument(
     initialText: String,
     private val maxHistory: Int = 2_000,
     private val maxRememberedOpIds: Int = 10_000,
+    /** Operations that would make the text longer than this are rejected ([RejectReason.TOO_LARGE]). */
+    private val maxLength: Int = Int.MAX_VALUE,
 ) {
     data class HistoryEntry(val op: TextOperation, val opId: String, val author: String, val revision: Int)
 
@@ -38,7 +40,7 @@ class ServerDocument(
         data class Rejected(val reason: RejectReason, val message: String) : Result
     }
 
-    enum class RejectReason { STALE, INVALID }
+    enum class RejectReason { STALE, INVALID, TOO_LARGE }
 
     var text: String = initialText
         private set
@@ -83,6 +85,9 @@ class ServerDocument(
             }
             if (transformed.baseLength != text.length) {
                 return Result.Rejected(RejectReason.INVALID, "Operation length does not match revision $baseRevision")
+            }
+            if (transformed.targetLength > maxLength && transformed.targetLength > text.length) {
+                return Result.Rejected(RejectReason.TOO_LARGE, "The document would exceed $maxLength characters")
             }
             text = transformed.apply(text)
         } catch (e: IllegalArgumentException) {

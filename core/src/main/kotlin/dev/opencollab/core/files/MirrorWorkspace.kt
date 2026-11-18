@@ -27,7 +27,8 @@ class MirrorWorkspace(val root: Path, private val writer: TreeWriter = NioTreeWr
     private val stateFile: Path = root.resolve(".opencollab").resolve("mirror.json")
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
     private val tracked = HashMap<String, String>()
-    private val assembling = HashMap<String, Partial>()
+    /** Files being received, by request and path: two requests may send the same file at once. */
+    private val assembling = HashMap<Pair<String, String>, Partial>()
     private val tmpDir: Path = root.resolve(".opencollab").resolve("tmp")
 
     var sessionId: String = ""
@@ -117,8 +118,9 @@ class MirrorWorkspace(val root: Path, private val writer: TreeWriter = NioTreeWr
      * very large files never sit in memory. Returns the verified file once the last chunk
      * arrived and its SHA-256 matched, or null while incomplete.
      */
-    fun acceptChunk(path: String, offset: Long, data: ByteArray, last: Boolean, sha256: String, maxBytes: Long): Received? {
-        val partial = assembling.getOrPut(path) {
+    fun acceptChunk(requestId: String, path: String, offset: Long, data: ByteArray, last: Boolean, sha256: String, maxBytes: Long): Received? {
+        val key = requestId to path
+        val partial = assembling.getOrPut(key) {
             Files.createDirectories(tmpDir)
             val file = Files.createTempFile(tmpDir, "recv-", ".part")
             Partial(file, Files.newOutputStream(file), MessageDigest.getInstance("SHA-256"))
@@ -131,18 +133,18 @@ class MirrorWorkspace(val root: Path, private val writer: TreeWriter = NioTreeWr
             partial.size += data.size
             if (!last) return null
             partial.out.close()
-            assembling.remove(path)
+            assembling.remove(key)
             val actual = partial.digest.digest().joinToString("") { "%02x".format(it) }
             if (actual != sha256) throw IOException("Checksum mismatch for $path")
             return Received(path, partial.file, actual, partial.size)
         } catch (e: IOException) {
-            discard(path, partial)
+            discard(key, partial)
             throw e
         }
     }
 
-    private fun discard(path: String, partial: Partial) {
-        assembling.remove(path)
+    private fun discard(key: Pair<String, String>, partial: Partial) {
+        assembling.remove(key)
         runCatching { partial.out.close() }
         runCatching { Files.deleteIfExists(partial.file) }
     }
@@ -159,7 +161,7 @@ class MirrorWorkspace(val root: Path, private val writer: TreeWriter = NioTreeWr
 
     /** Drops partially received files (e.g. after a disconnect). */
     fun discardPartials() {
-        assembling.entries.toList().forEach { (path, partial) -> discard(path, partial) }
+        assembling.entries.toList().forEach { (key, partial) -> discard(key, partial) }
     }
 
     fun writeReceived(path: String, bytes: ByteArray) {

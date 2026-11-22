@@ -5,6 +5,8 @@ import com.intellij.openapi.ui.DialogPanel
 import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.COLUMNS_LARGE
+import com.intellij.ui.dsl.builder.COLUMNS_SHORT
+import com.intellij.ui.dsl.builder.Row
 import com.intellij.ui.dsl.builder.LabelPosition
 import com.intellij.ui.dsl.builder.MAX_LINE_LENGTH_WORD_WRAP
 import com.intellij.ui.dsl.builder.bindIntText
@@ -31,6 +33,14 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
     /** Address fields, shown as dots unless addresses are shown (streaming-safe) or being edited. */
     private val addressFields = mutableListOf<AddressField>()
     private fun addressField() = AddressField(settings.state.showAddresses).also { addressFields += it }
+
+    /** A port, hidden like the addresses (an address is often recognised by its port). */
+    private fun Row.portField(property: kotlin.reflect.KMutableProperty0<Int>): Cell<AddressField> =
+        cell(addressField()).columns(COLUMNS_SHORT)
+            .bindText({ property.get().toString() }, { text -> text.trim().toIntOrNull()?.let(property::set) })
+            .validationOnInput { field ->
+                if (String(field.password).trim().toIntOrNull()?.takeIf { it in 0..65535 } == null) error(message("settings.port.invalid")) else null
+            }
 
     /** Fills [field] with this machine's public IP, queried off the UI thread. */
     private fun detectPublicIp(field: AddressField, service: String) {
@@ -128,7 +138,7 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
                             cell(addressField()).bindText(s::bindAddress).comment(message("settings.listen.address.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                         }.enabledIf(directEnabled.selected)
                         row(message("settings.port")) {
-                            intTextField(0..65535).bindIntText(s::port).comment(message("settings.port.comment"), MAX_LINE_LENGTH_WORD_WRAP)
+                            portField(s::port).comment(message("settings.port.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                         }.enabledIf(directEnabled.selected)
                         row(message("settings.advertised")) {
                             cell(addressField()).bindText(s::advertisedHosts).columns(COLUMNS_LARGE).comment(message("settings.advertised.comment"), MAX_LINE_LENGTH_WORD_WRAP)
@@ -150,7 +160,7 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
                             button(message("settings.forwarding.detect")) { detectPublicIp(publicField.component, s.publicIpService) }
                         }.enabledIf(forwardingEnabled.selected)
                         row(message("settings.forwarding.port")) {
-                            intTextField(0..65535).bindIntText(s::externalPort).comment(message("settings.forwarding.port.comment"), MAX_LINE_LENGTH_WORD_WRAP)
+                            portField(s::externalPort).comment(message("settings.forwarding.port.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                         }.enabledIf(forwardingEnabled.selected)
                         row(message("settings.forwarding.service")) {
                             textField().bindText(s::publicIpService).columns(COLUMNS_LARGE).comment(message("settings.forwarding.service.comment"), MAX_LINE_LENGTH_WORD_WRAP)

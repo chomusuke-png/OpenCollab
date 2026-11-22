@@ -25,7 +25,9 @@ class DiagnosticsTest : BasePlatformTestCase() {
         assertTrue(out, out.contains("<project>\\src\\Main.kt"))
         assertTrue(out, out.contains("~/.gradle/x"))
         assertTrue(out, out.contains("Banana")) // only whole words are names
-        assertTrue(out, out.contains(".54:47800"))
+        assertTrue(out, out.contains(".54:•••"))
+        assertFalse(out, out.contains("47800"))
+        assertFalse(out, out.contains("8443"))
     }
 
     fun testTheReportHasVersionsAndNoSecrets() {

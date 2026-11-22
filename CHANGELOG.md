@@ -19,6 +19,10 @@ without its own section; the section becomes the release notes on GitHub and the
   changes. *Tools | OpenCollab | What's New* shows this page at any time, and the plugin's page
   in *Settings | Plugins* lists the latest changes.
 
+### Changed
+- While addresses are hidden, **ports are hidden too** (•••.•••.•••.54:•••), on screen, in the
+  diagnostics and in the port fields on the settings page.
+
 ## [3.6.0] - 2026-11-22
 
 ### Added

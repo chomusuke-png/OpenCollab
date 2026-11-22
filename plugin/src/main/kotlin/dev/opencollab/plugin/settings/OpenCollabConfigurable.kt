@@ -172,7 +172,15 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
                             .comment(message("settings.router.enable.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                             .onChanged { box ->
                                 // Explained before it is first turned on: it opens a port to the internet.
-                                if (box.isSelected && !s.automaticPortForwarding && !confirmRouterForwarding(box)) box.isSelected = false
+                                // The dialog waits until the click is over: opening it during the click moves
+                                // the focus away, and Swing then finishes the click again, clearing the box.
+                                if (!box.isSelected) routerConfirmed = false
+                                else if (!s.automaticPortForwarding && !routerConfirmed) {
+                                    ApplicationManager.getApplication().invokeLater({
+                                        if (!box.isSelected || routerConfirmed) return@invokeLater
+                                        if (confirmRouterForwarding(box)) routerConfirmed = true else box.isSelected = false
+                                    }, ModalityState.stateForComponent(box))
+                                }
                             }
                     }
                     row {
@@ -222,6 +230,8 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
      * UI thread: it is loaded once in the background and the field stays disabled until then.
      */
     @Volatile private var storedSecret: String? = null
+    /** The user accepted the explanation of automatic port forwarding while this page is open. */
+    private var routerConfirmed = false
 
     override fun reset() {
         super.reset()

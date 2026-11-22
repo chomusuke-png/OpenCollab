@@ -14,6 +14,8 @@ without its own section; the section becomes the release notes on GitHub and the
 
 ## [Unreleased]
 
+## [3.8.0] - 2026-11-22
+
 ### Added
 - **Build files are read-only for guests** by default: build scripts and tool configuration
   (`build.gradle`, `pom.xml`, `package.json`, `Makefile`, `Dockerfile` and the like) decide what

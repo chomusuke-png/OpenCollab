@@ -51,6 +51,14 @@ details) and messages sent over the network stay in English.
 ./gradlew :relay-server:run --args="--self-signed --allow-anonymous-hosts --bind 127.0.0.1"   # local relay for development
 ```
 
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every push to `main` and every pull request: `./gradlew check
+buildPlugin` (all modules and their tests) and then `:plugin:verifyPlugin`, on Linux with Java 21
+and 25. It checks out the full history because the version comes from the release tags. When a
+run fails, the test reports are attached to it; every run attaches the built plugin ZIP. Release
+only from a commit whose run passed.
+
 ### Trying it with two IDEs on one machine
 
 1. Terminal 1: `./gradlew :plugin:runIde`; open (or create) a project, *Settings | Tools |

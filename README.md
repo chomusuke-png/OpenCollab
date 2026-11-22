@@ -1,5 +1,7 @@
 # OpenCollab
 
+[![CI](https://github.com/chomusuke-png/OpenCollab/actions/workflows/ci.yml/badge.svg)](https://github.com/chomusuke-png/OpenCollab/actions/workflows/ci.yml)
+
 A free IntelliJ IDEA plugin for real-time collaboration between separate IntelliJ
 installations. A **host** owns the authoritative project and invites other developers.
 **Guests** use their own IDE, settings and plugins: they edit shared files together, see each

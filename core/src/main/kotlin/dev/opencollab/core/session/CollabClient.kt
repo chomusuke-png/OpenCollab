@@ -108,6 +108,8 @@ class CollabClient(
     presenceIntervalMillis: Long = 0,
     /** Optional [Features] this participant supports. */
     private val features: List<String> = Features.ALL,
+    /** This IDE installation's id ([Message.Hello.clientId]); null sends none. */
+    private val clientId: String? = null,
 ) : AutoCloseable {
     private val inbound = SerialExecutor("opencollab-client")
     private val requestCounter = AtomicLong()
@@ -372,7 +374,7 @@ class CollabClient(
             override fun onMessage(text: String) = inbound.execute { if (connection === conn) receive(text) }
             override fun onClosed(reason: String) = inbound.execute { if (connection === conn) onConnectionLost(reason) }
         })
-        conn.send(MessageCodec.encode(Message.Hello(PROTOCOL_VERSION, displayName, token, resumeKey, features = features)))
+        conn.send(MessageCodec.encode(Message.Hello(PROTOCOL_VERSION, displayName, token, resumeKey, features = features, clientId = clientId)))
     }
 
     private fun onConnectionLost(reason: String) {

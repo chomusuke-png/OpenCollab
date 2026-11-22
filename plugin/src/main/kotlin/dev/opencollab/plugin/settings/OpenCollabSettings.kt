@@ -54,6 +54,10 @@ class OpenCollabSettings : PersistentStateComponent<OpenCollabSettings.State> {
         var inviteExpiryMinutes: Int = 24 * 60
         /** Each copied invitation lets only one person join. */
         var singleUseInvites: Boolean = false
+        /** Show IP addresses and host names in full; off, they appear partly hidden (safe for streaming). */
+        var showAddresses: Boolean = false
+        /** Random id of this IDE installation, so hosts recognise us when we join again ([clientId]). */
+        var clientId: String = ""
     }
 
     private var state = State()
@@ -70,6 +74,15 @@ class OpenCollabSettings : PersistentStateComponent<OpenCollabSettings.State> {
         guestReadOnly = SharingRules.DEFAULT_GUEST_READ_ONLY + lines(state.extraGuestReadOnly),
         maxFileBytes = state.maxFileSizeMb.coerceIn(1, SharingRules.MAX_ALLOWED_FILE_MB).toLong() * 1024 * 1024,
     )
+
+    /** This installation's id, created on first use. Not a secret: hosts only use it to keep restrictions. */
+    fun clientId(): String {
+        if (state.clientId.isBlank()) state.clientId = dev.opencollab.core.session.randomToken(12)
+        return state.clientId
+    }
+
+    /** [text] as it may be shown on screen: addresses partly hidden unless the user chose to see them. */
+    fun shown(text: String): String = if (state.showAddresses) text else dev.opencollab.core.util.AddressMask.mask(text)
 
     var relaySecret: String
         get() = PasswordSafe.instance.getPassword(secretAttributes()) ?: ""

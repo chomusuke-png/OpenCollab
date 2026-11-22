@@ -62,7 +62,7 @@ class SessionStatusWidget(private val project: Project) : CustomStatusBarWidget 
             service.sessionClock(),
             service.unreadChat.takeIf { it > 0 }?.let { message("widget.unread", it) },
         ).joinToString(" · ")
-        label.toolTipText = service.status
+        label.toolTipText = dev.opencollab.plugin.settings.OpenCollabSettings.getInstance().shown(service.status)
     }
 
     override fun dispose() {

@@ -44,6 +44,7 @@ La interfaz del plugin está en **inglés** y **español** y sigue el idioma del
 | Ask me before anyone joins | While hosting, each person with an invitation waits until you click *Let in* (default on) |
 | Invitations expire after (minutes) | Default 1440 (24 h); 0 = when the session ends. People already in the session stay |
 | Each invitation lets only one person join | Copy a new invitation per person; a leaked one stops working after its first use (default off) |
+| Show IP addresses and host names | Off by default: addresses appear partly hidden (`•••.•••.•••.54`, `my•••.duckdns.org`) in the tool window, join requests and notifications, so a stream or shared screen does not reveal them. The IDE log file always keeps them in full |
 
 ## Start a session (host)
 
@@ -55,8 +56,9 @@ La interfaz del plugin está en **inglés** y **español** y sigue el idioma del
    the copied text (`oc1:…`) to the
    participant over a private channel (direct message, password manager share…). **An invitation
    is a secret**: anybody holding it can ask to join with that role.
-4. When someone uses it, a notification shows their name, role and address: click **Let in** or
-   **Reject**. Unanswered requests are refused after 2 minutes, and at most 5 people can wait at
+4. When someone uses it, a notification shows their name, role and (partly hidden) address: click
+   **Let in** or **Reject**. The same requests are listed at the top of the tool window under
+   *Waiting to join*, in case you miss the notification. Unanswered requests are refused after 2 minutes, and at most 5 people can wait at
    once.
 
 Each copied invitation is new: it expires after the time set in the settings (24 h by default) and
@@ -179,7 +181,10 @@ OpenCollab mirror, so it can never overwrite your own data.
 * **Permissions** (host only, same menu): besides editing, each guest can be allowed or denied to
   *run configurations and builds*, *terminal commands*, *breakpoints* and the *chat* (a muted guest
   still reads it). Editors start with all of them, viewers only with the chat, and viewers can
-  never get more than the chat. Changing a role resets permissions to that role's defaults. The
+  never get more than the chat. Changing a role resets permissions to that role's defaults.
+  If a guest leaves and joins again during the session (even with a new invitation or another
+  name from the same IDE), they keep the role and permissions you gave them; an invitation never
+  gives them more than it grants. The
   host checks them on every request, and a request still waiting is refused when its permission
   is taken away.
 * **Leaving:** guests click **Leave**; the host clicks **End Session**, which disconnects

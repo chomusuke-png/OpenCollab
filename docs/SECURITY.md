@@ -56,6 +56,12 @@ arbitrary filesystem access on the host; single commands run only after the host
   used up or is revoked. With *Ask me before anyone joins* (default) the host still has to let
   each person in; without it, the invitation alone is enough. The prompt shows the name a person
   chose and the address they connect from: names are not verified.
+* **Restrictions follow people only loosely.** A guest who leaves and rejoins keeps the role and
+  permissions the host gave them, recognised by their IDE installation id or their name. Both can
+  be changed by a determined person, so keep join approval on and remove or refuse them again.
+* **Addresses on screen** are partly hidden by default (tool window, join requests,
+  notifications) so streams do not reveal them; the IDE log file keeps them in full, and the
+  settings page still shows the addresses typed there.
 * **Editors are powerful.** See the trust assumptions above.
 * **Relay metadata.** The relay sees IP addresses, room ids, and the timing and size of traffic.
 * **Self-signed relays** require pinning the fingerprint; a relay started with `--self-signed`

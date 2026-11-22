@@ -26,7 +26,7 @@ closes the connection.
 
 | Group | Messages |
 |---|---|
-| Handshake | `hello` (protocol version, display name, invitation token, optional resume key, `features`) → `welcome` (participant id, role, resume key, participants, sharing rules, file event sequence, session age, `features`) or `rejected` |
+| Handshake | `hello` (protocol version, display name, invitation token, optional resume key, `features`, optional `clientId`: a random id per IDE installation the host uses only to keep a returning person's restrictions) → `welcome` (participant id, role, resume key, participants, sharing rules, file event sequence, session age, `features`) or `rejected` |
 | Membership | `participantJoined`, `participantLeft`, `roleChanged`, `setRole` (host only), `sessionEnded`; participant infos carry `permissions` (`run`, `commands`, `debug`, `chat`; absent = the role's defaults: all for editors, `chat` for viewers) |
 | Files | `requestManifest` → `manifest`; `requestFiles` → `fileChunk`* + `filesDone` (`missing`: not on the host or not shared; `failed`: could not be sent now, e.g. a read error; at most 4 requests per participant stream at once, later ones wait in a queue of 256); `fileRequest` → `result`; `fileEvent` (host broadcast, sequenced); `resumeFiles` → replayed `fileEvent`s + `result`, or `filesResyncRequired` |
 | Documents | `openDoc` → `docState`; `op` → `ack` (+ `remoteOp` to other subscribers) or `opRejected` (`stale`, `invalid`, `forbidden`, `too-large`: the document would exceed the size limit; after `forbidden` and `too-large` the client drops its edits and resyncs); `resumeDoc` → `docCatchUp` or `docState`; `docUnavailable`; `docSaved`; `closeDoc` |

@@ -185,6 +185,12 @@ sealed class Message {
         val pluginVersion: String = "",
         /** [Features] this participant supports. */
         val features: List<String> = emptyList(),
+        /**
+         * A random id kept by this IDE installation, so a host recognises someone who leaves and
+         * joins again (it keeps the role and permissions it gave them). Not a secret, not proof of
+         * identity: it is only ever used to restrict, never to grant more than the invitation.
+         */
+        val clientId: String? = null,
     ) : Message()
 
     @Serializable @SerialName("welcome")

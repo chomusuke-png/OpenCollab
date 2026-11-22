@@ -134,6 +134,9 @@ data class HostConfig(
 /** "Is typing" updates relayed per participant per second (clients send far fewer). */
 private const val TYPING_PER_SECOND = 5
 
+private const val SESSION_THREAD = "opencollab-host"
+private val SESSION_THREAD_NAME = Regex("""$SESSION_THREAD-\d+""")
+
 fun randomToken(bytes: Int = 24): String {
     val b = ByteArray(bytes)
     SecureRandom().nextBytes(b)
@@ -155,7 +158,7 @@ class HostSession(
     /** Wall clock for chat timestamps ([Scheduler.nowMillis] is monotonic, not a date). */
     private val wallClock: () -> Long = System::currentTimeMillis,
 ) : AutoCloseable {
-    private val exec = SerialExecutor("opencollab-host")
+    private val exec = SerialExecutor(SESSION_THREAD)
     private val io = SerialExecutor("opencollab-host-io")
     private val transferPool = java.util.concurrent.Executors.newCachedThreadPool(dev.opencollab.core.util.daemonThreadFactory("opencollab-transfer"))
 
@@ -175,6 +178,8 @@ class HostSession(
         var handshakeTimer: Cancellable? = null
         /** Set while this newcomer waits for the host's user to accept them. */
         var pendingJoin: PendingJoin? = null
+        /** How this person is recognised if they leave and join again ([remembered]). */
+        var identity: List<String> = emptyList()
         var open = true
         /** Latest position held back by the presence limit, and the timer that relays it. */
         var pendingPresence: Message.Presence? = null
@@ -191,6 +196,24 @@ class HostSession(
         fun send(m: Message) {
             if (open) connection.send(MessageCodec.encode(m))
         }
+    }
+
+    /** The role and permissions the host gave someone, kept for the session by [identityOf] keys. */
+    private data class Remembered(val role: Role, val permissions: Set<String>)
+    private val remembered = HashMap<String, Remembered>()
+
+    /**
+     * Keys a returning person is recognised by: the id of their IDE installation and their name.
+     * Either can be changed by a determined person, which is why remembered settings only ever
+     * restrict (and why the host can still refuse or remove them).
+     */
+    private fun identityOf(hello: Message.Hello): List<String> =
+        listOfNotNull(hello.clientId?.let { "client:$it" }, "name:" + hello.displayName.trim().lowercase())
+
+    private fun remember(peer: Peer) {
+        val info = peer.info ?: return
+        val entry = Remembered(info.role, info.effectivePermissions)
+        peer.identity.forEach { remembered[it] = entry }
     }
 
     private class PendingJoin(val requestId: String, val hello: Message.Hello, val role: Role, val expiry: Cancellable)
@@ -323,20 +346,35 @@ class HostSession(
     fun documentText(path: String): String? = docs[path]?.text
     fun documentRevision(path: String): Int? = docs[path]?.revision
 
-    override fun close() {
+    /**
+     * Ends the session: every participant is told ([Message.SessionEnded], so guests stop instead
+     * of reconnecting) and disconnected. Waits up to [awaitMillis] until that is handed to the
+     * connections, so the caller can close the transports afterwards without cutting it off.
+     */
+    override fun close() = close(awaitMillis = 3_000)
+
+    fun close(awaitMillis: Long) {
+        if (closed) return // already ended (the session thread may be gone: nothing would count down)
+        val told = java.util.concurrent.CountDownLatch(1)
         exec.execute {
-            if (closed) return@execute
-            closed = true
-            for (peer in peers.values.toList()) {
-                peer.send(Message.SessionEnded("Host ended the session"))
-                peer.open = false
-                peer.connection.close("session ended")
+            try {
+                if (closed) return@execute
+                closed = true
+                for (peer in peers.values.toList()) {
+                    peer.send(Message.SessionEnded("Host ended the session"))
+                    peer.open = false
+                    peer.connection.close("session ended")
+                }
+                peers.clear()
+                detached.values.forEach { it.expiry.cancel() }
+                detached.clear()
+                listener.onParticipantsChanged(emptyList())
+            } finally {
+                told.countDown()
             }
-            peers.clear()
-            detached.values.forEach { it.expiry.cancel() }
-            detached.clear()
-            listener.onParticipantsChanged(emptyList())
         }
+        // Never wait on the session thread itself: the task above runs after this one.
+        if (!Thread.currentThread().name.matches(SESSION_THREAD_NAME)) told.await(awaitMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
         exec.close()
         io.close()
         transferPool.shutdownNow()
@@ -450,9 +488,16 @@ class HostSession(
             peer.resumeKey = resumed.resumeKey
             peer.subscriptions.addAll(resumed.subscriptions)
         } else {
-            info = ParticipantInfo(randomToken(9), hello.displayName, tokenRole, nextColor++ % 8, Permission.defaultsFor(tokenRole).sorted())
+            // Someone the host already restricted in this session keeps those restrictions, whatever
+            // invitation they come back with; an invitation never gives them more than it grants.
+            val known = identityOf(hello).mapNotNull { remembered[it] }
+            val role = if (tokenRole.canEdit && known.any { !it.role.canEdit }) Role.VIEWER else tokenRole
+            val permissions = known.fold(Permission.defaultsFor(role)) { acc, it -> acc intersect it.permissions }
+            info = ParticipantInfo(randomToken(9), hello.displayName, role, nextColor++ % 8, permissions.sorted())
             peer.resumeKey = randomToken(24)
+            if (known.isNotEmpty()) listener.onLog("${hello.displayName} is back: keeping the role and permissions given earlier")
         }
+        peer.identity = identityOf(hello)
         peer.info = info
         peer.features = hello.features.toSet() intersect config.features
         peer.send(
@@ -549,6 +594,7 @@ class HostSession(
         if (info.role == Role.HOST || info.role == role) return
         val updated = info.copy(role = role, permissions = Permission.defaultsFor(role).sorted())
         peer.info = updated
+        remember(peer)
         if (!role.canEdit) refusePendingRuns(peer, RunRefusal.VIEWER)
         broadcast(Message.RoleChanged(participantId, role))
         broadcastPermissions(updated)
@@ -566,6 +612,7 @@ class HostSession(
         if (granted == info.effectivePermissions) return
         val updated = info.copy(permissions = granted.toList())
         peer.info = updated
+        remember(peer)
         if (Permission.RUN !in granted || Permission.COMMANDS !in granted) refusePendingRuns(peer, RunRefusal.NOT_ALLOWED)
         broadcastPermissions(updated)
         listener.onLog("${info.displayName} may now: ${granted.joinToString().ifEmpty { "-" }}")

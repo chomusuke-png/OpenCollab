@@ -283,8 +283,10 @@ class CollabSessionService(private val project: Project) : Disposable {
         fire()
     }
 
+    /** Notifications can be seen on a stream or shared screen: addresses are hidden unless shown in the settings. */
     private fun notify(message: String, type: NotificationType = NotificationType.INFORMATION, title: String = "") {
-        NotificationGroupManager.getInstance().getNotificationGroup("OpenCollab").createNotification(title, message, type).notify(project)
+        val shown = OpenCollabSettings.getInstance().shown(message)
+        NotificationGroupManager.getInstance().getNotificationGroup("OpenCollab").createNotification(title, shown, type).notify(project)
     }
 
     private fun projectRoot(): Path {
@@ -292,8 +294,18 @@ class CollabSessionService(private val project: Project) : Disposable {
         return Path.of(base)
     }
 
+    /** Reasons the host sends in English, in the user's language when we know them. */
+    private fun hostReason(detail: String): String = when (detail) {
+        "Host ended the session" -> message("reason.host.ended")
+        "Removed by host" -> message("reason.removed")
+        "The host did not let you join" -> message("reason.not.let.in")
+        "The host did not answer your request to join" -> message("reason.no.answer")
+        else -> detail.removePrefix("Host refused the connection: ").let { if (it != detail) hostReason(it) else detail }
+    }
+
     private fun bridgeListener() = object : BridgeListener {
-        override fun onStateChanged(state: ClientState, detail: String) {
+        override fun onStateChanged(state: ClientState, rawDetail: String) {
+            val detail = hostReason(rawDetail)
             if (mode is Mode.Joined) {
                 status = when (state) {
                     ClientState.CONNECTED -> message("status.connected", (mode as Mode.Joined).project)
@@ -503,8 +515,14 @@ class CollabSessionService(private val project: Project) : Disposable {
                 val who = participants.firstOrNull { it.id == participantId }?.displayName ?: "?"
                 ideSharing?.onBreakpointRequest(who, path, line, add)
             }
-            override fun onJoinRequest(request: JoinRequestInfo) = askToLetIn(request)
+            override fun onJoinRequest(request: JoinRequestInfo) {
+                joinRequests += request
+                fire()
+                askToLetIn(request)
+            }
             override fun onJoinRequestClosed(requestId: String) {
+                joinRequests.removeIf { it.requestId == requestId }
+                fire()
                 joinPrompts.remove(requestId)?.let { ApplicationManager.getApplication().invokeLater({ it.expire() }, ModalityState.any()) }
             }
         })
@@ -648,6 +666,7 @@ class CollabSessionService(private val project: Project) : Disposable {
             // About two minutes of retries (1+2+4+8+16+30+30+30 s): enough for a network blip; after
             // that the host is considered gone and the guest leaves automatically.
             mirror, ReconnectPolicy(maxAttempts = 8), presenceIntervalMillis = settings.presenceIntervalMs.toLong(),
+            clientId = OpenCollabSettings.getInstance().clientId(),
         )
         bridge.client = client
         bridge.install()
@@ -714,6 +733,16 @@ class CollabSessionService(private val project: Project) : Disposable {
         appendLog(message("log.invites.revoked"))
     }
 
+    /** Host: people waiting to be let in, oldest first (also listed in the tool window, in case a notification is missed). */
+    val joinRequests = CopyOnWriteArrayList<JoinRequestInfo>()
+
+    /** Host: lets someone in or refuses them (from the notification or the tool window). */
+    fun answerJoin(requestId: String, accepted: Boolean) {
+        val hosting = mode as? Mode.Hosting ?: return
+        joinPrompts.remove(requestId)?.expire()
+        hosting.session.answerJoin(requestId, accepted)
+    }
+
     /** Open "let in?" prompts by join request id. */
     private val joinPrompts = ConcurrentHashMap<String, Notification>()
 
@@ -733,17 +762,11 @@ class CollabSessionService(private val project: Project) : Disposable {
     private fun askToLetIn(request: JoinRequestInfo) {
         ApplicationManager.getApplication().invokeLater({
             val hosting = mode as? Mode.Hosting ?: return@invokeLater
-            val text = message("join.request", StringUtil.escapeXmlEntities(request.displayName), roleName(request.role), StringUtil.escapeXmlEntities(shownAddress(request.address)))
+            val text = message("join.request", StringUtil.escapeXmlEntities(request.displayName), roleName(request.role), StringUtil.escapeXmlEntities(OpenCollabSettings.getInstance().shown(shownAddress(request.address))))
             val notification = NotificationGroupManager.getInstance().getNotificationGroup("OpenCollab")
                 .createNotification(message("join.request.title"), text, NotificationType.WARNING)
-            notification.addAction(NotificationAction.createSimpleExpiring(message("join.request.accept")) {
-                joinPrompts.remove(request.requestId)
-                hosting.session.answerJoin(request.requestId, accepted = true)
-            })
-            notification.addAction(NotificationAction.createSimpleExpiring(message("join.request.reject")) {
-                joinPrompts.remove(request.requestId)
-                hosting.session.answerJoin(request.requestId, accepted = false)
-            })
+            notification.addAction(NotificationAction.createSimpleExpiring(message("join.request.accept")) { answerJoin(request.requestId, true) })
+            notification.addAction(NotificationAction.createSimpleExpiring(message("join.request.reject")) { answerJoin(request.requestId, false) })
             joinPrompts[request.requestId] = notification
             notification.notify(project)
         }, ModalityState.any())
@@ -806,8 +829,13 @@ class CollabSessionService(private val project: Project) : Disposable {
                 Disposer.dispose(m.consoles)
                 m.ide?.let(Disposer::dispose)
                 m.bridge.client.close()
-                m.session.close()
-                m.transports.forEach { runCatching { it.close() } }
+                // Guests are told the session ended before the transports go down, or they would
+                // only see a dropped connection and keep reconnecting. Off the EDT: the session
+                // thread may be waiting for the EDT, and closing waits for it a little.
+                ApplicationManager.getApplication().executeOnPooledThread {
+                    m.session.close()
+                    m.transports.forEach { runCatching { it.close() } }
+                }
                 Disposer.dispose(m.bridge)
                 appendLog(message("log.session.ended"))
             }
@@ -825,6 +853,7 @@ class CollabSessionService(private val project: Project) : Disposable {
         scheduler?.close()
         scheduler = null
         participants = emptyList()
+        joinRequests.clear()
         myRole = null
         sessionStartedAt = null
         latencies = emptyMap()

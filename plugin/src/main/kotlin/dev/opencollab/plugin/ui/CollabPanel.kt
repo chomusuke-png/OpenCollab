@@ -38,6 +38,7 @@ import dev.opencollab.plugin.bridge.PresenceRenderer
 import dev.opencollab.plugin.session.CollabSessionService
 import dev.opencollab.plugin.session.CollabSessionService.Mode
 import dev.opencollab.plugin.settings.OpenCollabConfigurable
+import dev.opencollab.plugin.settings.OpenCollabSettings
 import java.awt.BorderLayout
 import java.awt.Cursor
 import java.awt.FlowLayout
@@ -113,6 +114,17 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
     }
     private val settingsButton = JButton(AllIcons.General.Settings).apply { toolTipText = message("panel.settings.tooltip") }
     private val endpoints = JBLabel().apply { foreground = UIUtil.getContextHelpForeground() }
+
+    // ---- Host: people waiting to be let in (also offered as notifications, which can be missed)
+    private val requestsTitle = JBLabel().apply { font = JBUI.Fonts.label().asBold(); border = JBUI.Borders.empty(4, 0, 2, 0) }
+    private val requestRows = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
+    private val requestsPanel = JPanel(BorderLayout()).apply {
+        add(requestsTitle, BorderLayout.NORTH)
+        add(requestRows, BorderLayout.CENTER)
+        border = JBUI.Borders.emptyBottom(6)
+        isVisible = false
+    }
+    private var shownRequests: List<String> = emptyList()
     private val detailsLink = ActionLink(message("panel.connection.details")) { toggleDetails() }
 
     // ---- Participants -------------------------------------------------------------------
@@ -150,6 +162,7 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         val header = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             add(row(status, fill = true)); add(row(sessionTime, fill = true)); add(row(buttons, fill = true)); add(row(detailsLink)); add(row(endpoints, fill = true))
+            add(row(requestsPanel, fill = true))
         }
         list.cellRenderer = ParticipantRenderer()
         list.emptyText.text = message("panel.no.participants")
@@ -402,14 +415,14 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         if (!inSession) {
             // e.g. "Disconnected: Host ended the session" after an automatic leave.
             val idle = message("status.idle")
-            lastStatus.text = service.status.takeIf { it != idle } ?: ""
+            lastStatus.text = service.status.takeIf { it != idle }?.let(::shown) ?: ""
             lastStatus.isVisible = lastStatus.text.isNotEmpty()
         }
         // Before any session the welcome screen stands alone; afterwards the last chat and activity stay readable.
         bottomTabs.isVisible = inSession || service.log().isNotEmpty() || service.chat().isNotEmpty()
 
-        status.text = service.status
-        status.toolTipText = service.status
+        status.text = shown(service.status)
+        status.toolTipText = status.text
         status.icon = service.health()?.let { CollabUi.Dot(CollabUi.healthColor(it)) }
         updateSessionTime()
 
@@ -425,7 +438,8 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         detailsLink.isVisible = hosting != null
         detailsLink.text = message("panel.connection.details") + if (detailsExpanded()) " ▾" else " ▸"
         endpoints.isVisible = hosting != null && detailsExpanded()
-        endpoints.text = hosting?.let { message("panel.endpoints", it.endpoints.joinToString(", "), it.fingerprint.take(29)) } ?: ""
+        endpoints.text = hosting?.let { shown(message("panel.endpoints", it.endpoints.joinToString(", "), it.fingerprint.take(29))) } ?: ""
+        refreshJoinRequests(hosting != null)
 
         val selectedId = list.selectedValue?.id
         model.clear()
@@ -439,11 +453,44 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         bottomTabs.setTitleAt(0, if (unread > 0) message("panel.chat.unread", unread) else message("panel.chat.title"))
         chatPanel.refresh(inSession = mode is Mode.Hosting || mode is Mode.Joined)
         // Ping updates refresh the panel every 2 s; leave the log (and where it is scrolled) alone unless it changed.
-        val log = service.log().joinToString("\n")
+        val log = shown(service.log().joinToString("\n"))
         if (logArea.text != log) {
             logArea.text = log
             logArea.caretPosition = logArea.document.length
         }
+    }
+
+    /** Addresses partly hidden unless the user chose to see them (Settings | Tools | OpenCollab). */
+    private fun shown(text: String) = OpenCollabSettings.getInstance().shown(text)
+
+    /** One row per person waiting: name, role and (hidden) address, with Let in and Reject. */
+    private fun refreshJoinRequests(hosting: Boolean) {
+        val requests = if (hosting) service.joinRequests.toList() else emptyList()
+        requestsPanel.isVisible = requests.isNotEmpty()
+        val ids = requests.map { it.requestId }
+        if (ids == shownRequests) return
+        shownRequests = ids
+        requestsTitle.text = message("panel.join.requests", requests.size)
+        requestRows.removeAll()
+        for (request in requests) {
+            val who = JBLabel(request.displayName, AllIcons.General.User, SwingConstants.LEADING).apply {
+                toolTipText = message("join.request.tooltip", roleName(request.role), shown(service.shownAddress(request.address)))
+            }
+            val actions = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0)).apply {
+                isOpaque = false
+                add(JButton(message("join.request.accept")).apply { addActionListener { service.answerJoin(request.requestId, true) } })
+                add(JButton(message("join.request.reject")).apply { addActionListener { service.answerJoin(request.requestId, false) } })
+            }
+            requestRows.add(JPanel(BorderLayout()).apply {
+                alignmentX = LEFT_ALIGNMENT
+                border = JBUI.Borders.empty(2, 0)
+                add(who, BorderLayout.CENTER)
+                add(JBLabel(roleName(request.role)).apply { foreground = UIUtil.getContextHelpForeground(); border = JBUI.Borders.emptyLeft(6) }, BorderLayout.SOUTH)
+                add(actions, BorderLayout.EAST)
+            })
+        }
+        requestRows.revalidate()
+        requestRows.repaint()
     }
 
     /** Word-wrap toggle and Clear for the activity log, as in the IDE's own consoles. */

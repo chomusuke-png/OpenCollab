@@ -82,6 +82,10 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
                         .comment(message("settings.invite.expiry.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                 }
                 row {
+                    checkBox(message("settings.show.addresses")).bindSelected(s::showAddresses)
+                        .comment(message("settings.show.addresses.comment"), MAX_LINE_LENGTH_WORD_WRAP)
+                }
+                row {
                     checkBox(message("settings.invite.single")).bindSelected(s::singleUseInvites)
                         .comment(message("settings.invite.single.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                 }

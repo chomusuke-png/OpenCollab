@@ -110,6 +110,7 @@ object MessageCodec {
                 check(m.displayName.none { it.isISOControl() }, "Invalid display name")
                 check(m.token.length in 1..256, "Invalid token")
                 m.resumeKey?.let { check(it.length <= MAX_ID, "Invalid resume key") }
+                m.clientId?.let(::id)
                 features(m.features)
             }
             is Message.SetRole -> id(m.participantId)

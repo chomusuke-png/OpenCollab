@@ -154,6 +154,7 @@ class Harness(val hostRoot: Path, rules: SharingRules = SharingRules(), config: 
         connector: Connector? = null,
         presenceIntervalMillis: Long = 20,
         features: List<String> = dev.opencollab.core.protocol.Features.ALL,
+        clientId: String? = null,
     ): FakeIde {
         val ide = FakeIde(name)
         val conn = connector ?: server.connector(name) { links += it }
@@ -162,6 +163,7 @@ class Harness(val hostRoot: Path, rules: SharingRules = SharingRules(), config: 
             ReconnectPolicy(initialDelayMillis = 100, maxDelayMillis = 400, maxAttempts = 20),
             presenceIntervalMillis = presenceIntervalMillis,
             features = features,
+            clientId = clientId,
         )
         clients += ide.client
         ide.client.start()

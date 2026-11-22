@@ -204,4 +204,75 @@ class SecurityTest {
             assertFalse(Features.PERMISSIONS in old.client.sharedFeatures)
         }
     }
+
+    @Test
+    fun `someone who leaves and joins again keeps the role and permissions the host gave them`() {
+        project()
+        Harness(host).use { h ->
+            val alice = h.guest("alice", guestDir("alice"), clientId = "install-1")
+            awaitState(alice, ClientState.CONNECTED)
+            h.session.setPermissions(alice.client.participantId, setOf(Permission.RUN))
+            eventually { alice.client.permissions() == setOf(Permission.RUN) }
+            alice.client.close()
+            eventually { h.session.participants().size == 1 }
+
+            // Same installation under another name, with a fresh editor invitation: still restricted.
+            val again = h.guest("alice2", guestDir("alice2"), token = h.session.createInvite(Role.EDITOR), clientId = "install-1")
+            awaitState(again, ClientState.CONNECTED)
+            assertEquals(setOf(Permission.RUN), again.client.permissions())
+            assertFalse(again.client.sendChat("hi"), "still muted")
+
+            // Demoted to viewer, then back with an editor invitation and only the same name: still a viewer.
+            h.session.setRole(again.client.participantId, Role.VIEWER)
+            eventually { again.client.role == Role.VIEWER }
+            again.client.close()
+            eventually { h.session.participants().size == 1 }
+            val third = h.guest("alice2", guestDir("alice3"), token = h.session.createInvite(Role.EDITOR))
+            awaitState(third, ClientState.CONNECTED)
+            assertEquals(Role.VIEWER, third.client.role)
+            assertEquals(setOf(Permission.CHAT), third.client.permissions())
+
+            // Restoring them is remembered too; and someone new is not affected.
+            h.session.setRole(third.client.participantId, Role.EDITOR)
+            eventually { third.client.role == Role.EDITOR }
+            val bob = h.guest("bob", guestDir("bob"), clientId = "install-2")
+            awaitState(bob, ClientState.CONNECTED)
+            assertEquals(Role.EDITOR, bob.client.role)
+            assertEquals(Permission.ALL.toSet(), bob.client.permissions())
+        }
+    }
+
+    @Test
+    fun `remembered settings never give more than the invitation`() {
+        project()
+        Harness(host).use { h ->
+            val alice = h.guest("alice", guestDir("alice"), clientId = "install-1")
+            awaitState(alice, ClientState.CONNECTED)
+            h.session.setPermissions(alice.client.participantId, setOf(Permission.CHAT, Permission.DEBUG))
+            eventually { alice.client.permissions() == setOf(Permission.CHAT, Permission.DEBUG) }
+            alice.client.close()
+            eventually { h.session.participants().size == 1 }
+            val asViewer = h.guest("alice", guestDir("alice-v"), token = h.session.config.viewerToken, clientId = "install-1")
+            awaitState(asViewer, ClientState.CONNECTED)
+            assertEquals(Role.VIEWER, asViewer.client.role)
+            assertEquals(setOf(Permission.CHAT), asViewer.client.permissions())
+        }
+    }
+
+    @Test
+    fun `ending the session tells guests before the connections go down, so they do not reconnect`() {
+        project()
+        Harness(host).use { h ->
+            val alice = h.guest("alice", guestDir("alice"))
+            awaitState(alice, ClientState.CONNECTED)
+            h.session.close()
+            h.links.forEach { it.close("transport stopped") } // what closing the transports does right after
+            awaitRefused(alice)
+            Thread.sleep(300)
+            assertEquals(ClientState.DISCONNECTED, alice.client.state)
+            assertTrue(alice.stateDetails.last().contains("ended"), alice.stateDetails.toString())
+            assertFalse(alice.states.contains(ClientState.RECONNECTING), alice.states.toString())
+        }
+    }
 }
+

@@ -17,6 +17,10 @@
 3. Restart the IDE if asked. An **OpenCollab** tool window appears on the right side bar and an
    *OpenCollab* submenu appears under *Tools*.
 
+New versions arrive like any other plugin update, with their changes on the plugin's page in
+*Settings | Plugins*. After an update, a notification names the new version and links to what
+changed in it. *Tools | OpenCollab | What's New* opens the [full list](../CHANGELOG.md) at any time.
+
 ## Language / Idioma
 
 The plugin UI is available in **English** and **Spanish**. It follows the IDE language: install

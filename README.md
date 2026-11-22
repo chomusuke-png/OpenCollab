@@ -24,6 +24,7 @@ other's cursors and selections, and navigate the project in their own IDE.
 | Document | Contents |
 |---|---|
 | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Install the ZIP, start a session, invite people, roles, sharing rules |
+| [CHANGELOG.md](CHANGELOG.md) | What's new in each version |
 | [docs/BETA_TESTING.md](docs/BETA_TESTING.md) | For testers: install, what to try, how to report bugs |
 | [docs/RELAY_SERVER.md](docs/RELAY_SERVER.md) | Deploy and configure the self-hosted relay (JAR, systemd or Docker) |
 | [docs/DEVELOPER.md](docs/DEVELOPER.md) | Build, test, run, architecture, module layout |
@@ -68,10 +69,21 @@ next version:
 Local builds are labelled `<next>-dev.<commits since the tag>` (e.g. `1.5.0-dev.3`; also with
 uncommitted changes), so building never uses up a version number.
 
-To publish a release, commit and push, then run `./gradlew :plugin:publishRelease` (needs the
-[GitHub CLI](https://cli.github.com/), logged in). It builds the computed version, creates GitHub
-release and tag `v<version>` with the plugin ZIP and an `updatePlugins.xml`, and refuses when
-there is nothing new since the last tag.
+What changed in each version is in [CHANGELOG.md](CHANGELOG.md). Add each change under
+`## [Unreleased]` as you make it. The plugin's *What's New* in the IDE and the GitHub release
+notes come from that file.
+
+To publish a release:
+1. Rename `## [Unreleased]` to `## [<version>] - <date>`, using the version the build prints, and
+   add a new, empty `## [Unreleased]` above it.
+2. Commit and push.
+3. Run `./gradlew :plugin:publishRelease`. It needs the [GitHub CLI](https://cli.github.com/),
+   logged in.
+
+`publishRelease` builds the computed version and creates the GitHub release and tag
+`v<version>`. The release has the plugin ZIP, an `updatePlugins.xml` and that section as its
+notes. It refuses to publish when there is nothing new since the last tag, or when the
+changelog has no section for the version.
 
 Installed copies update themselves: on first start the plugin adds
 `https://github.com/chomusuke-png/OpenCollab/releases/latest/download/updatePlugins.xml` to

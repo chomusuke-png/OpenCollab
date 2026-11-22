@@ -42,6 +42,10 @@ class CopyInviteAction : CollabAction() {
 }
 
 /** Copies a report for a bug report: versions, connection kind and the recent log, with addresses and names hidden. */
+class WhatsNewAction : CollabAction() {
+    override fun actionPerformed(e: AnActionEvent) { com.intellij.ide.BrowserUtil.browse(dev.opencollab.plugin.updates.WhatsNew.CHANGELOG_URL) }
+}
+
 class CopyDiagnosticsAction : CollabAction() {
     override fun actionPerformed(e: AnActionEvent) { e.project?.let(dev.opencollab.plugin.session.Diagnostics::copy) }
     override fun update(e: AnActionEvent) { e.presentation.isEnabled = e.project != null }

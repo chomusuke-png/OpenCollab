@@ -1,23 +1,36 @@
 package dev.opencollab.plugin.updates
 
+import com.intellij.ide.BrowserUtil
 import com.intellij.ide.util.PropertiesComponent
+import com.intellij.notification.NotificationAction
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 import com.intellij.openapi.updateSettings.impl.UpdateSettings
+import dev.opencollab.plugin.OpenCollabBundle
+import dev.opencollab.plugin.session.Diagnostics
 
 /**
  * Adds OpenCollab's release feed to the IDE's custom plugin repositories, so new versions show up
  * as ordinary plugin updates. Done once per IDE: if the user removes the repository, it stays removed.
+ * After an update, says which version is now installed, with a link to what is new in it.
  */
 class UpdateRepositoryActivity : ProjectActivity {
     override suspend fun execute(project: Project) {
         val properties = PropertiesComponent.getInstance()
-        synchronized(UpdateRepositoryActivity::class.java) {
-            if (properties.getBoolean(REGISTERED_KEY)) return
-            val hosts = UpdateSettings.getInstance().storedPluginHosts
-            if (URL !in hosts) hosts.add(URL)
-            properties.setValue(REGISTERED_KEY, true)
+        val announce = synchronized(UpdateRepositoryActivity::class.java) {
+            // Set by every version since the first release, so it also tells an update apart
+            // from a first installation for those that did not record their version yet.
+            val installedBefore = properties.getBoolean(REGISTERED_KEY)
+            if (!installedBefore) {
+                val hosts = UpdateSettings.getInstance().storedPluginHosts
+                if (URL !in hosts) hosts.add(URL)
+                properties.setValue(REGISTERED_KEY, true)
+            }
+            WhatsNew.recordVersion(properties, Diagnostics.pluginVersion(), installedBefore)
         }
+        announce?.let { WhatsNew.notifyUpdated(project, it) }
     }
 
     companion object {
@@ -26,4 +39,38 @@ class UpdateRepositoryActivity : ProjectActivity {
         const val URL = "https://github.com/chomusuke-png/OpenCollab/releases/latest/download/updatePlugins.xml"
         private const val REGISTERED_KEY = "dev.opencollab.updateRepositoryRegistered"
     }
+}
+
+/** The changes of each version: CHANGELOG.md, also published as each GitHub release's notes. */
+object WhatsNew {
+    const val CHANGELOG_URL = "https://github.com/chomusuke-png/OpenCollab/blob/main/CHANGELOG.md"
+    private const val VERSION_KEY = "dev.opencollab.lastVersion"
+    private val RELEASE = Regex("""(\d+)\.(\d+)\.(\d+)""")
+
+    fun releaseUrl(version: String) = "https://github.com/chomusuke-png/OpenCollab/releases/tag/v$version"
+
+    /**
+     * Remembers [version] as the one in use and returns it when it should be announced: a released
+     * version newer than the last one this IDE ran. Never on the first installation (unless
+     * [installedBefore]) nor for development builds, which have no release page.
+     */
+    fun recordVersion(properties: PropertiesComponent, version: String, installedBefore: Boolean): String? {
+        val current = parse(version) ?: return null
+        val last = properties.getValue(VERSION_KEY)
+        if (last == version) return null
+        properties.setValue(VERSION_KEY, version)
+        val previous = last?.let(::parse) ?: return if (last == null && installedBefore) version else null
+        return version.takeIf { compare(current, previous) > 0 }
+    }
+
+    fun notifyUpdated(project: Project, version: String) {
+        NotificationGroupManager.getInstance().getNotificationGroup("OpenCollab")
+            .createNotification(OpenCollabBundle.message("whats.new.title", version), OpenCollabBundle.message("whats.new.content"), NotificationType.INFORMATION)
+            .addAction(NotificationAction.createSimpleExpiring(OpenCollabBundle.message("whats.new.open")) { BrowserUtil.browse(releaseUrl(version)) })
+            .notify(project)
+    }
+
+    private fun parse(version: String) = RELEASE.matchEntire(version)?.groupValues?.drop(1)?.map(String::toInt)
+
+    private fun compare(a: List<Int>, b: List<Int>) = a.zip(b).map { (x, y) -> x.compareTo(y) }.firstOrNull { it != 0 } ?: 0
 }

@@ -357,6 +357,12 @@ class CollabClient(
         inbound.close()
     }
 
+    /**
+     * After [close]: waits until the last save of the mirror's state has been written, so the
+     * mirror folder can be deleted or reused. Never call it from a client callback.
+     */
+    fun awaitClosed(timeoutMillis: Long = 5_000): Boolean = inbound.awaitTermination(timeoutMillis)
+
     // ---- Connection management (inbound thread) ----------------------------------------
 
     private fun connectOnce(initial: Boolean) {

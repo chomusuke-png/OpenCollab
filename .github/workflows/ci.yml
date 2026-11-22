@@ -35,7 +35,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v5
 
       - name: Build and test
-        run: ./gradlew check buildPlugin --stacktrace
+        run: ./gradlew check buildPlugin --continue --stacktrace
 
       - name: Verify plugin compatibility
         run: ./gradlew :plugin:verifyPlugin --stacktrace

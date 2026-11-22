@@ -304,22 +304,22 @@ class CollabSessionService(private val project: Project) : Disposable {
     }
 
     private fun bridgeListener() = object : BridgeListener {
-        override fun onStateChanged(state: ClientState, rawDetail: String) {
-            val detail = hostReason(rawDetail)
+        override fun onStateChanged(state: ClientState, detail: String) {
+            val reasonText = hostReason(detail)
             if (mode is Mode.Joined) {
                 status = when (state) {
                     ClientState.CONNECTED -> message("status.connected", (mode as Mode.Joined).project)
-                    ClientState.DISCONNECTED -> message("status.disconnected", detail)
+                    ClientState.DISCONNECTED -> message("status.disconnected", reasonText)
                     ClientState.SYNCING -> message("status.syncing")
-                    ClientState.RECONNECTING -> message("status.reconnecting", detail)
+                    ClientState.RECONNECTING -> message("status.reconnecting", reasonText)
                     ClientState.CONNECTING -> message("status.connecting", (mode as Mode.Joined).project)
                 }
                 if (state == ClientState.CONNECTED) joinedOnce = true
                 if (state == ClientState.DISCONNECTED) {
-                    appendLog(message("status.disconnected", detail))
-                    val hint = if (!joinedOnce) connectionHint(detail) else null
+                    appendLog(message("status.disconnected", reasonText))
+                    val hint = if (!joinedOnce) connectionHint(reasonText) else null
                     hint?.let(::appendLog)
-                    notify(listOfNotNull(message("notify.disconnected", detail), hint).joinToString("\n\n"), NotificationType.WARNING)
+                    notify(listOfNotNull(message("notify.disconnected", reasonText), hint).joinToString("\n\n"), NotificationType.WARNING)
                     // The host ended the session, removed us, or stayed unreachable: leave on our own
                     // so the panel is ready to host or join again. The status keeps the reason.
                     val ended = mode

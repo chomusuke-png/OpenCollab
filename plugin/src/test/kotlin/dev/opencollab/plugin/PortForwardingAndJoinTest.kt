@@ -76,7 +76,7 @@ class PortForwardingAndJoinTest : HeavyPlatformTestCase() {
         val guest = RemoteIde("pf")
         guest.client = CollabClient(onlyPublic.connector(), "Remote", onlyPublic.token, guest, guest.edt, scheduler,
             MirrorWorkspace(dir), ReconnectPolicy(maxAttempts = 2))
-        cleanups += { guest.client.close() }
+        cleanups += { guest.client.close(); guest.client.awaitClosed() }
         guest.client.start()
         waitFor("guest connected via public endpoint") { guest.client.state == ClientState.CONNECTED }
         assertEquals("hello\n", Files.readString(dir.resolve("Shared.txt")))

@@ -216,6 +216,7 @@ class TransportTest {
             assertTrue(text.endsWith("}\n"), text)
         } finally {
             guest.client.close()
+            guest.client.awaitClosed()
             hostIde.client.close()
             session.close()
             transport.close()

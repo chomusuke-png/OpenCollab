@@ -109,7 +109,7 @@ class PluginIntegrationTest : HeavyPlatformTestCase() {
         val ide = RemoteIde(name)
         val decoded = Invite.decode(invite)
         ide.client = CollabClient(decoded.connector(), name, decoded.token, ide, ide.edt, scheduler, MirrorWorkspace(dir), ReconnectPolicy(maxAttempts = 2))
-        cleanups += { ide.client.close() }
+        cleanups += { ide.client.close(); ide.client.awaitClosed() }
         ide.client.start()
         return ide
     }

@@ -172,6 +172,8 @@ class Harness(val hostRoot: Path, rules: SharingRules = SharingRules(), config: 
 
     override fun close() {
         clients.forEach { it.close() }
+        // Each client writes its state on the way out; the temp folders are deleted next.
+        clients.forEach { it.awaitClosed() }
         session.close()
         scheduler.close()
     }

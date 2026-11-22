@@ -30,6 +30,10 @@ class SerialExecutor(name: String) : Executor, AutoCloseable {
     override fun close() {
         delegate.shutdown()
     }
+
+    /** After [close]: waits for the tasks already queued to finish. False if they did not in time. */
+    fun awaitTermination(timeoutMillis: Long): Boolean =
+        delegate.awaitTermination(timeoutMillis, TimeUnit.MILLISECONDS)
 }
 
 /** Minimal scheduling abstraction so throttling and reconnect backoff are testable. */

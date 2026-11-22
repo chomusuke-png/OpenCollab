@@ -32,6 +32,8 @@ class OpenCollabSettings : PersistentStateComponent<OpenCollabSettings.State> {
         /** Port opened on the router; 0 = same as the listen port. */
         var externalPort: Int = 0
         var publicIpService: String = dev.opencollab.transport.PortForwarding.DEFAULT_PUBLIC_IP_SERVICE
+        /** While hosting, ask the router (UPnP / NAT-PMP) to forward the listen port. Off until the user turns it on. */
+        var automaticPortForwarding: Boolean = false
         var enableRelay: Boolean = false
         var relayUrl: String = ""
         /** SHA-256 fingerprint for self-signed relays; empty = verify with system CAs. */

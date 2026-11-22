@@ -9,7 +9,8 @@ other's cursors and selections, and navigate the project in their own IDE.
 
 * Works with the free features of IntelliJ IDEA 2026.2.x (depends only on the IntelliJ
   Platform core). No Remote Development / split mode, no Ultimate subscription.
-* Direct TLS connections on a LAN/VPN, or a **self-hosted relay** for remote networks.
+* Direct TLS connections on a LAN/VPN or through router port forwarding (by hand, or optionally
+  configured automatically with UPnP / NAT-PMP), or a **self-hosted relay** for remote networks.
   Through the relay, traffic is end-to-end TLS between guest and host — the relay only sees
   ciphertext.
 * Host-authoritative operational transformation (OT) for documents, incremental file

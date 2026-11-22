@@ -59,6 +59,8 @@ import dev.opencollab.transport.PortForwarding
 import dev.opencollab.transport.RelayHostTransport
 import dev.opencollab.transport.TlsIdentity
 import dev.opencollab.transport.TrustMode
+import dev.opencollab.transport.router.PortMappingException
+import dev.opencollab.transport.router.RouterPortMapping
 import java.io.IOException
 import java.net.URI
 import java.nio.file.Path
@@ -199,6 +201,18 @@ class CollabSessionService(private val project: Project) : Disposable {
         private set
     @Volatile var participants: List<ParticipantInfo> = emptyList()
         private set
+    /** Host: what the router last said about automatic port forwarding; null when it is not used. */
+    @Volatile var routerStatus: String? = null
+        private set
+    /** Host: [routerStatus] is a failure the user should look at. */
+    @Volatile var routerProblem: Boolean = false
+        private set
+    /** Host: the router's port mapping while hosting with automatic port forwarding. */
+    @Volatile private var routerMapping: RouterPortMapping? = null
+    /** Host: the internet endpoint the router mapping gives, added to new invitations. */
+    @Volatile private var routerEndpoint: String? = null
+    /** Finds the routers to ask; tests replace it with simulated ones. */
+    @Volatile internal var routerDiscovery: () -> List<dev.opencollab.transport.router.PortMapper> = { RouterPortMapping.discoverRouters() }
     @Volatile var myRole: Role? = null
         private set
     /** Wall-clock time the session started (from the host's session age), or null when not in one. */
@@ -449,6 +463,9 @@ class CollabSessionService(private val project: Project) : Disposable {
         clearConsoles()
         chatEntries.clear()
         unreadChat = 0
+        routerStatus = null
+        routerProblem = false
+        routerEndpoint = null
         status = message("status.starting")
         fire()
         ApplicationManager.getApplication().executeOnPooledThread {
@@ -541,7 +558,8 @@ class CollabSessionService(private val project: Project) : Disposable {
             direct.start(session::accept)
             transports += direct
             endpoints += direct.endpoints
-            if (s.portForwarding) {
+            val mapped = s.automaticPortForwarding && mapRouterPort(bind, direct.boundPort)
+            if (s.portForwarding && !mapped) {
                 val publicHost = s.publicAddress.trim().ifEmpty {
                     try {
                         PortForwarding.detectPublicIp(s.publicIpService)
@@ -582,14 +600,14 @@ class CollabSessionService(private val project: Project) : Disposable {
 
         fun invite(role: Role, token: String) = Invite(
             project = project.name, role = role, token = token, fingerprint = identity.fingerprint,
-            direct = endpoints.toList(), relay = relayUrl, room = room,
+            direct = (endpoints + listOfNotNull(routerEndpoint)).distinct(), relay = relayUrl, room = room,
             relayFingerprint = s.relayFingerprint.takeIf { it.isNotBlank() && relayUrl != null },
         ).encode()
 
         val hosting = Mode.Hosting(
             session, transports, bridge,
             makeInvite = { role -> invite(role, session.createInvite(role, inviteTtl, maxUses = if (s.singleUseInvites) 1 else 0)) },
-            endpoints = endpoints + listOfNotNull(room?.let { "relay $relayUrl (room ${it.take(6)}…)" }),
+            endpoints = endpoints + listOfNotNull(routerEndpoint, room?.let { "relay $relayUrl (room ${it.take(6)}…)" }),
             fingerprint = identity.fingerprint,
             consoles = HostConsoleSharing(project, root, session, s.shareConsoles) { appendLog(it) }.also { consoleSharing = it },
             ide = if (s.shareIdeState) HostIdeSharing(project, root, rules, session) { appendLog(it) }.also { ideSharing = it } else null,
@@ -606,6 +624,73 @@ class CollabSessionService(private val project: Project) : Disposable {
         appendLog(message("log.session.started", hosting.endpoints.joinToString()))
         appendLog(message("log.fingerprint", identity.fingerprint))
         fire()
+    }
+
+    /**
+     * Host: asks the router to forward the listen port. False when it cannot, and hosting goes
+     * on without it: on this network, through manual forwarding or through the relay.
+     */
+    private fun mapRouterPort(bind: String, listenPort: Int): Boolean {
+        if (bind == "127.0.0.1" || bind == "::1" || bind == "localhost") {
+            routerProblem = true
+            routerStatus = message("router.failed.bind")
+            appendLog(message("router.failed.bind"))
+            fire()
+            return false
+        }
+        val mapping = RouterPortMapping(listenPort, OpenCollabSettings.getInstance().state.externalPort, onStatus = ::onRouterStatus, discover = routerDiscovery)
+        routerMapping = mapping
+        return try {
+            mapping.start()
+            true
+        } catch (e: PortMappingException) {
+            routerMapping = null
+            // Leaving while the router was asked ends the start; turning the setting off does not.
+            if (e.reason == PortMappingException.Reason.CANCELLED) {
+                if (mode != Mode.Starting) throw IOException(message("router.cancelled"), e)
+                return false
+            }
+            val fallback = message(if (OpenCollabSettings.getInstance().state.enableRelay) "router.fallback.relay" else "router.fallback")
+            notify(routerFailure(e.reason, e.message ?: "") + "\n" + fallback, NotificationType.WARNING, message("router.failed.title"))
+            false
+        }
+    }
+
+    private fun routerFailure(reason: PortMappingException.Reason, detail: String): String = when (reason) {
+        PortMappingException.Reason.NO_ROUTER -> message("router.failed.none")
+        PortMappingException.Reason.NOT_PUBLIC -> message("router.failed.cgnat")
+        PortMappingException.Reason.PORT_TAKEN -> message("router.failed.taken", detail)
+        PortMappingException.Reason.CANCELLED -> message("router.cancelled")
+        else -> message("router.failed", detail)
+    }
+
+    private fun onRouterStatus(status: RouterPortMapping.Status) {
+        routerProblem = status is RouterPortMapping.Status.Failed || status is RouterPortMapping.Status.RenewalFailed
+        val text = when (status) {
+            RouterPortMapping.Status.Searching -> message("router.searching")
+            is RouterPortMapping.Status.Found -> message("router.found", status.protocol.label)
+            is RouterPortMapping.Status.Mapped -> {
+                val host = OpenCollabSettings.getInstance().state.publicAddress.trim().ifEmpty { status.externalAddress.hostAddress }
+                val endpoint = PortForwarding.endpoint(host, status.mapping.externalPort, status.mapping.internalPort)
+                // New invitations carry the endpoint the router confirmed last (renewals may change the port).
+                if (routerMapping != null) routerEndpoint = endpoint
+                message("router.mapped", status.mapping.protocol.label, status.mapping.externalPort, status.mapping.internalPort, endpoint)
+            }
+            is RouterPortMapping.Status.RenewalFailed -> message("router.renewal.failed", status.detail)
+            is RouterPortMapping.Status.Failed -> routerFailure(status.reason, status.detail)
+            RouterPortMapping.Status.Removed -> message("router.removed")
+        }
+        routerStatus = text
+        appendLog(text)
+        fire()
+    }
+
+    /** Host: removes the router's port mapping now (automatic forwarding was turned off). */
+    fun stopRouterMapping() {
+        val mapping = routerMapping ?: return
+        routerMapping = null
+        routerEndpoint = null
+        ApplicationManager.getApplication().executeOnPooledThread { mapping.close() }
     }
 
     /**
@@ -822,6 +907,12 @@ class CollabSessionService(private val project: Project) : Disposable {
         // Idle before closing the client, so its final DISCONNECTED event is not reported as a
         // connection loss (and does not trigger another automatic leave).
         mode = Mode.Idle
+        // The router mapping ends with the session, also when it is still being made.
+        routerEndpoint = null
+        routerMapping?.let { mapping ->
+            routerMapping = null
+            ApplicationManager.getApplication().executeOnPooledThread { mapping.close() }
+        }
         when (m) {
             is Mode.Hosting -> {
                 Disposer.dispose(m.consoles)
@@ -866,6 +957,9 @@ class CollabSessionService(private val project: Project) : Disposable {
     private fun cleanupAfterFailure() {
         startingTransports.forEach { runCatching { it.close() } }
         startingTransports = mutableListOf()
+        routerMapping?.close()
+        routerMapping = null
+        routerEndpoint = null
         scheduler?.close()
         scheduler = null
         mode = Mode.Idle

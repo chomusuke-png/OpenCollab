@@ -30,11 +30,32 @@
 | Overwriting the host's unsaved work | A guest's file write/delete is refused while the host has unsaved changes in that file; shared documents are only changed through OT |
 | Overwriting a guest's data | Joining requires an empty folder or an existing OpenCollab mirror; resync only deletes files that came from the host |
 | Resource exhaustion | Frame size limits, file size limits (default 10 MB, configurable up to 2048 MB; large files are streamed from disk with an 8 MB acknowledgement window and written to a temporary file on the guest, never held in memory), 8 MB limit for guest uploads, message rate limit per peer (2 000/s), presence limit (120/s), chat limit (5 messages/s, 2 000 characters, no control characters; the host stamps the sender, and names and text are shown as plain text and escaped in notifications), bounded histories and logs |
+| Router port mappings | Automatic port forwarding is off by default and explained before it is turned on. It maps exactly one TCP port, the listen port, only while hosting, and removes only the mapping it created. Guests have no way to ask for mappings. Answers from the network are checked: the router's description must come from the device that answered the search, on the local network, over plain HTTP to its own IPv4 address (no redirects, proxies, DTDs or external entities, at most 256 KB); NAT-PMP answers only from the router's address. A device on the network pretending to be the router can at worst make invitations advertise a wrong address, which guests refuse because the certificate is pinned |
 | Credentials | The plugin never reads or sends IDE credentials, tokens or settings. The relay host secret is stored in the IDE password safe and only sent to the relay |
 
 Cryptography is provided by the JDK (JSSE TLS, SecureRandom, SHA-256) and BouncyCastle (only to
-generate the self-signed X.509 certificate). No custom cryptography or NAT traversal is
-implemented.
+generate the self-signed X.509 certificate). No custom cryptography is implemented, and no NAT
+traversal beyond asking the router for a port mapping (UPnP IGD, NAT-PMP) when the host turns it
+on.
+
+## Automatic port forwarding
+
+* **What becomes reachable:** one TCP port (the listen port, or another external port the router
+  gives) on this computer, from the whole internet, while a session is hosted. Behind it is the
+  session's TLS server: a connection without the pinned certificate's invitation token gets
+  nothing, and join approval still applies. No other port or service is mapped.
+* **When mappings exist:** created when hosting starts with the setting on, renewed at half their
+  lease (one hour by default), removed when hosting ends or the setting is turned off. If the IDE
+  is killed, the router drops the mapping when the lease runs out; routers that only accept
+  permanent mappings keep it until it is removed on the router. Mappings OpenCollab did not
+  create (another device or port) are never changed or removed.
+* **What is sent where:** only to the router on the local network. No router details, local or
+  public addresses are sent to any other service; when the router maps the port, the public IP service
+  is not contacted. Router errors shown on screen are reduced to plain text.
+* **Limitations of UPnP and NAT-PMP:** neither protocol authenticates anyone; any program on this
+  computer or network can ask a router that supports them for mappings. That is a property of
+  the router, so keep UPnP off on the router if nothing needs it. Support differs between
+  routers, and the feature cannot work behind carrier-grade NAT.
 
 ## What guests see of the host's IDE
 

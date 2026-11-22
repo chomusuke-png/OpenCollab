@@ -10,7 +10,6 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import dev.opencollab.core.files.SharingRules
-import dev.opencollab.core.protocol.Role
 
 /**
  * Application-level OpenCollab settings (stored in opencollab.xml in the IDE config
@@ -37,7 +36,6 @@ class OpenCollabSettings : PersistentStateComponent<OpenCollabSettings.State> {
         var relayUrl: String = ""
         /** SHA-256 fingerprint for self-signed relays; empty = verify with system CAs. */
         var relayFingerprint: String = ""
-        var defaultInviteRole: String = Role.EDITOR.name
         var extraExcludes: String = ""
         var includes: String = ""
         var extraGuestReadOnly: String = ""

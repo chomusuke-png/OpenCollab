@@ -19,6 +19,8 @@ import dev.opencollab.plugin.session.CollabSessionService
 import dev.opencollab.plugin.session.CollabSessionService.Mode
 import java.awt.BorderLayout
 import java.awt.CardLayout
+import java.awt.GridBagConstraints
+import java.awt.GridBagLayout
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.DefaultListModel
@@ -40,6 +42,16 @@ internal class HostIdePanel(private val service: CollabSessionService) : JPanel(
     private val frameList = JBList(frames)
     private val variables = DefaultListModel<DebugVariable>()
     private val variableList = JBList(variables)
+    private val changesScroll = JBScrollPane(changeList)
+    private lateinit var stack: JBSplitter
+    private lateinit var gitSection: JPanel
+    private lateinit var debugSection: JPanel
+    /**
+     * Git above the debugger. A section whose list would be empty (no changes, not paused) shrinks
+     * to its status line, and only sections with content share the height.
+     */
+    private val guestView = JPanel(GridBagLayout())
+    private var shownLists: Pair<Boolean, Boolean>? = null
 
     init {
         add(JBLabel(message("host.only.guests")).apply {
@@ -57,7 +69,7 @@ internal class HostIdePanel(private val service: CollabSessionService) : JPanel(
             }
         }
         onDoubleClick(changeList) { service.hostIde?.navigate(it.path, 0) }
-        val git = section(message("host.git.title"), branch, JBScrollPane(changeList))
+        gitSection = section(message("host.git.title"), branch, changesScroll)
 
         frameList.selectionMode = ListSelectionModel.SINGLE_SELECTION
         frameList.cellRenderer = object : ColoredListCellRenderer<DebugFrame>() {
@@ -75,16 +87,31 @@ internal class HostIdePanel(private val service: CollabSessionService) : JPanel(
                 append(" = " + value.value)
             }
         }
-        val stack = JBSplitter(false, 0.4f).apply {
+        stack = JBSplitter(false, 0.4f).apply {
             firstComponent = titled(message("host.debug.frames"), JBScrollPane(frameList))
             secondComponent = titled(message("host.debug.variables"), JBScrollPane(variableList))
         }
-        val debug = section(message("host.debug.title"), debugStatus, stack)
+        debugSection = section(message("host.debug.title"), debugStatus, stack)
+        add(guestView, GUEST)
+        layoutSections(showChanges = false, showStack = false)
+    }
 
-        add(JBSplitter(true, 0.4f).apply {
-            firstComponent = git
-            secondComponent = debug
-        }, GUEST)
+    private fun layoutSections(showChanges: Boolean, showStack: Boolean) {
+        if (shownLists == (showChanges to showStack)) return
+        shownLists = showChanges to showStack
+        changesScroll.isVisible = showChanges
+        stack.isVisible = showStack
+        guestView.removeAll()
+        fun place(c: java.awt.Component, y: Int, weight: Double) = guestView.add(c, GridBagConstraints().apply {
+            gridx = 0; gridy = y; weightx = 1.0; weighty = weight
+            fill = GridBagConstraints.BOTH
+            anchor = GridBagConstraints.NORTH
+        })
+        place(gitSection, 0, if (showChanges) 1.0 else 0.0)
+        place(debugSection, 1, if (showStack) 1.5 else 0.0)
+        if (!showChanges && !showStack) place(JPanel().apply { isOpaque = false }, 2, 1.0)
+        guestView.revalidate()
+        guestView.repaint()
     }
 
     fun refresh() {
@@ -108,6 +135,7 @@ internal class HostIdePanel(private val service: CollabSessionService) : JPanel(
         }
         replace(frames, debug?.frames.orEmpty())
         replace(variables, debug?.variables.orEmpty())
+        layoutSections(showChanges = !vcs?.changes.isNullOrEmpty(), showStack = debug?.paused == true)
     }
 
     private fun <T> replace(model: DefaultListModel<T>, items: List<T>) {

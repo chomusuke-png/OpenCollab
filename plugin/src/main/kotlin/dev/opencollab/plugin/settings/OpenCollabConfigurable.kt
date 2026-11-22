@@ -6,15 +6,14 @@ import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.COLUMNS_LARGE
 import com.intellij.ui.dsl.builder.LabelPosition
+import com.intellij.ui.dsl.builder.MAX_LINE_LENGTH_WORD_WRAP
 import com.intellij.ui.dsl.builder.bindIntText
 import com.intellij.ui.dsl.builder.bindIntValue
-import com.intellij.ui.dsl.builder.bindItem
 import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.bindText
 import com.intellij.ui.dsl.builder.columns
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.ui.dsl.builder.rows
-import com.intellij.ui.dsl.builder.toNullableProperty
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.ui.components.JBCheckBox
@@ -55,64 +54,59 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
                     textField().bindText(s::displayName).columns(COLUMNS_LARGE)
                         .validationOnApply { if (it.text.isBlank() || it.text.trim().length > 64) error(message("settings.display.name.invalid")) else null }
                 }
-                row(message("settings.default.role")) {
-                    comboBox(
-                        listOf("EDITOR", "VIEWER"),
-                        com.intellij.ui.dsl.listCellRenderer.textListCellRenderer { value: String? ->
-                            value?.let { dev.opencollab.plugin.ui.roleName(dev.opencollab.core.protocol.Role.valueOf(it)) } ?: ""
-                        },
-                    ).bindItem(s::defaultInviteRole.toNullableProperty())
-                }
                 row(message("settings.presence.interval")) {
                     spinner(0..1000, 5).bindIntValue(s::presenceIntervalMs)
-                        .comment(message("settings.presence.interval.comment"))
+                        .comment(message("settings.presence.interval.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                 }
                 row {
                     checkBox(message("settings.share.consoles")).bindSelected(s::shareConsoles)
-                        .comment(message("settings.share.consoles.comment"))
+                        .comment(message("settings.share.consoles.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                 }
                 row {
                     checkBox(message("settings.share.ide")).bindSelected(s::shareIdeState)
-                        .comment(message("settings.share.ide.comment"))
+                        .comment(message("settings.share.ide.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                 }
                 row {
                     checkBox(message("settings.allow.commands")).bindSelected(s::allowCommandRequests)
-                        .comment(message("settings.allow.commands.comment"))
+                        .comment(message("settings.allow.commands.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                 }
+            }
+
+            group(message("settings.group.invitations")) {
                 row {
                     checkBox(message("settings.approve.joins")).bindSelected(s::approveJoins)
-                        .comment(message("settings.approve.joins.comment"))
+                        .comment(message("settings.approve.joins.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                 }
                 row(message("settings.invite.expiry")) {
                     intTextField(0..MAX_INVITE_MINUTES).bindIntText(s::inviteExpiryMinutes)
-                        .comment(message("settings.invite.expiry.comment"))
+                        .comment(message("settings.invite.expiry.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                 }
                 row {
                     checkBox(message("settings.invite.single")).bindSelected(s::singleUseInvites)
-                        .comment(message("settings.invite.single.comment"))
+                        .comment(message("settings.invite.single.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                 }
             }
 
             group(message("settings.group.sharing")) {
                 row(message("settings.max.size")) {
                     intTextField(1..SharingRules.MAX_ALLOWED_FILE_MB).bindIntText(s::maxFileSizeMb)
-                        .comment(message("settings.max.size.comment"))
+                        .comment(message("settings.max.size.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                 }
                 collapsibleGroup(message("settings.rules.advanced")) {
                     row {
                         textArea().bindText(s::extraExcludes).rows(3).align(AlignX.FILL)
                             .label(message("settings.excludes"), LabelPosition.TOP)
-                            .comment(message("settings.excludes.comment", SharingRules.DEFAULT_EXCLUDES.take(12).joinToString(", ")))
+                            .comment(message("settings.excludes.comment", SharingRules.DEFAULT_EXCLUDES.take(12).joinToString(", ")), MAX_LINE_LENGTH_WORD_WRAP)
                     }
                     row {
                         textArea().bindText(s::includes).rows(2).align(AlignX.FILL)
                             .label(message("settings.includes"), LabelPosition.TOP)
-                            .comment(message("settings.includes.comment"))
+                            .comment(message("settings.includes.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                     }
                     row {
                         textArea().bindText(s::extraGuestReadOnly).rows(2).align(AlignX.FILL)
                             .label(message("settings.readonly"), LabelPosition.TOP)
-                            .comment(message("settings.readonly.comment"))
+                            .comment(message("settings.readonly.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                     }
                 }
             }
@@ -123,13 +117,13 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
                     row { directEnabled = checkBox(message("settings.direct.enable")).bindSelected(s::enableDirect) }
                     indent {
                         row(message("settings.listen.address")) {
-                            textField().bindText(s::bindAddress).comment(message("settings.listen.address.comment"))
+                            textField().bindText(s::bindAddress).comment(message("settings.listen.address.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                         }.enabledIf(directEnabled.selected)
                         row(message("settings.port")) {
-                            intTextField(0..65535).bindIntText(s::port).comment(message("settings.port.comment"))
+                            intTextField(0..65535).bindIntText(s::port).comment(message("settings.port.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                         }.enabledIf(directEnabled.selected)
                         row(message("settings.advertised")) {
-                            textField().bindText(s::advertisedHosts).columns(COLUMNS_LARGE).comment(message("settings.advertised.comment"))
+                            textField().bindText(s::advertisedHosts).columns(COLUMNS_LARGE).comment(message("settings.advertised.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                         }.enabledIf(directEnabled.selected)
                     }
                 }.apply { expanded = s.enableDirect && (s.bindAddress != "0.0.0.0" || s.advertisedHosts.isNotBlank()) }
@@ -139,19 +133,19 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
                     lateinit var publicField: Cell<JBTextField>
                     row {
                         forwardingEnabled = checkBox(message("settings.forwarding.enable")).bindSelected(s::portForwarding)
-                            .comment(message("settings.forwarding.enable.comment"))
+                            .comment(message("settings.forwarding.enable.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                     }
                     indent {
                         row(message("settings.forwarding.public")) {
                             publicField = textField().bindText(s::publicAddress).columns(COLUMNS_LARGE)
-                                .comment(message("settings.forwarding.public.comment"))
+                                .comment(message("settings.forwarding.public.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                             button(message("settings.forwarding.detect")) { detectPublicIp(publicField.component, s.publicIpService) }
                         }.enabledIf(forwardingEnabled.selected)
                         row(message("settings.forwarding.port")) {
-                            intTextField(0..65535).bindIntText(s::externalPort).comment(message("settings.forwarding.port.comment"))
+                            intTextField(0..65535).bindIntText(s::externalPort).comment(message("settings.forwarding.port.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                         }.enabledIf(forwardingEnabled.selected)
                         row(message("settings.forwarding.service")) {
-                            textField().bindText(s::publicIpService).columns(COLUMNS_LARGE).comment(message("settings.forwarding.service.comment"))
+                            textField().bindText(s::publicIpService).columns(COLUMNS_LARGE).comment(message("settings.forwarding.service.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                         }.enabledIf(forwardingEnabled.selected)
                     }
                 }.apply { expanded = s.portForwarding }
@@ -161,16 +155,16 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
                     row { relayEnabled = checkBox(message("settings.relay.enable")).bindSelected(s::enableRelay) }
                     indent {
                         row(message("settings.relay.url")) {
-                            textField().bindText(s::relayUrl).columns(COLUMNS_LARGE).comment("wss://relay.example.com:8443")
+                            textField().bindText(s::relayUrl).columns(COLUMNS_LARGE).comment("wss://relay.example.com:8443", MAX_LINE_LENGTH_WORD_WRAP)
                                 .validationOnApply {
                                     if (relayEnabled.component.isSelected && !it.text.trim().startsWith("wss://")) error(message("settings.relay.url.invalid")) else null
                                 }
                         }.enabledIf(relayEnabled.selected)
                         row(message("settings.relay.fingerprint")) {
-                            textField().bindText(s::relayFingerprint).columns(COLUMNS_LARGE).comment(message("settings.relay.fingerprint.comment"))
+                            textField().bindText(s::relayFingerprint).columns(COLUMNS_LARGE).comment(message("settings.relay.fingerprint.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                         }.enabledIf(relayEnabled.selected)
                         row(message("settings.relay.secret")) {
-                            cell(secretField).columns(COLUMNS_LARGE).comment(message("settings.relay.secret.comment"))
+                            cell(secretField).columns(COLUMNS_LARGE).comment(message("settings.relay.secret.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                         }.enabledIf(relayEnabled.selected)
                     }
                 }.apply { expanded = s.enableRelay }

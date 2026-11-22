@@ -49,6 +49,7 @@ import javax.swing.DefaultListModel
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JList
+import com.intellij.util.ui.WrapLayout
 import javax.swing.JCheckBoxMenuItem
 import javax.swing.JMenuItem
 import javax.swing.JPanel
@@ -66,10 +67,12 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
     private val service = CollabSessionService.getInstance(project)
 
     // ---- Shared bottom tabs (chat of the current or last session, activity log) --------
-    // Unwrapped by default (long lines scroll horizontally); the choice is remembered per IDE.
+    // Wrapped by default, so nothing hides past the edge of a narrow tool window; the choice is
+    // remembered per IDE.
     private val logArea = JBTextArea().apply {
         isEditable = false
-        lineWrap = PropertiesComponent.getInstance().getBoolean(WRAP_KEY, false)
+        lineWrap = PropertiesComponent.getInstance().getBoolean(WRAP_KEY, true)
+        wrapStyleWord = true
     }
     internal val bottomTabs = JBTabbedPane() // internal: checked by CollabPanelTest
     private val chatPanel = ChatPanel(service)
@@ -140,10 +143,13 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
 
         idleView.add(welcome, BorderLayout.NORTH)
 
-        val buttons = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply { add(inviteButton); add(runOnHostButton); add(leaveButton); add(settingsButton) }
+        // Wraps onto a second line instead of cutting buttons off in a narrow tool window.
+        val buttons = JPanel(WrapLayout(FlowLayout.LEFT, 4, 4)).apply {
+            add(inviteButton); add(runOnHostButton); add(leaveButton); add(settingsButton)
+        }
         val header = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            add(row(status)); add(row(sessionTime)); add(row(buttons)); add(row(detailsLink)); add(row(endpoints))
+            add(row(status, fill = true)); add(row(sessionTime, fill = true)); add(row(buttons, fill = true)); add(row(detailsLink)); add(row(endpoints, fill = true))
         }
         list.cellRenderer = ParticipantRenderer()
         list.emptyText.text = message("panel.no.participants")
@@ -174,8 +180,9 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         refresh()
     }
 
-    private fun row(c: JComponent) = JPanel(BorderLayout()).apply {
-        add(c, BorderLayout.WEST)
+    /** One header line; [fill] lets [c] take the width (labels then end in "…" instead of overflowing). */
+    private fun row(c: JComponent, fill: Boolean = false) = JPanel(BorderLayout()).apply {
+        add(c, if (fill) BorderLayout.CENTER else BorderLayout.WEST)
         border = JBUI.Borders.emptyBottom(4)
         alignmentX = LEFT_ALIGNMENT
     }
@@ -204,10 +211,13 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         repaint()
     }
 
+    /** "You are editor · 00:01:20": the role only once in the session (not while waiting to be let in). */
     private fun updateSessionTime() {
         val clock = service.sessionClock()
         sessionTime.isVisible = clock != null
-        if (clock != null) sessionTime.text = message("panel.session.time", clock)
+        if (clock == null) return
+        val role = service.myRole
+        sessionTime.text = if (role != null) message("panel.role.and.time", roleName(role), clock) else message("panel.session.time", clock)
     }
 
     // ---- Invitations and connection details ---------------------------------------------
@@ -277,11 +287,13 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
     /** Only the host has more actions, and only on guests. */
     private fun hasMoreActions(p: ParticipantInfo) = service.mode is Mode.Hosting && p.role != Role.HOST
 
-    private fun moreActions(p: ParticipantInfo): List<JMenuItem> {
+    /** The host's actions on a guest, in groups (role, permissions, removal); null marks a separator. */
+    private fun moreActions(p: ParticipantInfo): List<JMenuItem?> {
         if (!hasMoreActions(p)) return emptyList()
-        val items = mutableListOf<JMenuItem>()
+        val items = mutableListOf<JMenuItem?>()
         if (p.role != Role.EDITOR) items += JMenuItem(message("panel.make.editor")).apply { addActionListener { service.setRole(p.id, Role.EDITOR) } }
         if (p.role != Role.VIEWER) items += JMenuItem(message("panel.make.viewer")).apply { addActionListener { service.setRole(p.id, Role.VIEWER) } }
+        items += null
         // What this guest may do besides editing; viewers can at most chat.
         val current = p.effectivePermissions
         val offered = if (p.role.canEdit) Permission.ALL else listOf(Permission.CHAT)
@@ -290,7 +302,8 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
                 addActionListener { service.setPermissions(p.id, if (isSelected) current + permission else current - permission) }
             }
         }
-        items += JMenuItem(message("panel.remove")).apply { addActionListener { service.kick(p.id) } }
+        items += null
+        items += JMenuItem(message("panel.remove"), AllIcons.Actions.Exit).apply { addActionListener { service.kick(p.id) } }
         return items
     }
 
@@ -357,7 +370,7 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
     private fun showMore(p: ParticipantInfo, e: MouseEvent) {
         val items = moreActions(p)
         if (items.isEmpty()) return
-        JPopupMenu().apply { items.forEach(::add) }.show(list, e.x, e.y)
+        JPopupMenu().apply { addAll(items) }.show(list, e.x, e.y)
     }
 
     /** Right-click menu: follow plus the host's actions. */
@@ -372,9 +385,13 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
             val following = service.following == p.id
             menu.add(JMenuItem(message(if (following) "panel.stop.following" else "panel.follow")).apply { addActionListener { toggleFollow(p) } })
         }
-        moreActions(p).forEach(menu::add)
+        val more = moreActions(p)
+        if (menu.componentCount > 0 && more.isNotEmpty()) menu.addSeparator()
+        menu.addAll(more)
         if (menu.componentCount > 0) menu.show(list, e.x, e.y)
     }
+
+    private fun JPopupMenu.addAll(items: List<JMenuItem?>) = items.forEach { if (it == null) addSeparator() else add(it) }
 
     // ---- Refresh ------------------------------------------------------------------------
 
@@ -388,8 +405,11 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
             lastStatus.text = service.status.takeIf { it != idle } ?: ""
             lastStatus.isVisible = lastStatus.text.isNotEmpty()
         }
+        // Before any session the welcome screen stands alone; afterwards the last chat and activity stay readable.
+        bottomTabs.isVisible = inSession || service.log().isNotEmpty() || service.chat().isNotEmpty()
 
-        status.text = service.myRole?.let { message("panel.status.with.role", service.status, roleName(it)) } ?: service.status
+        status.text = service.status
+        status.toolTipText = service.status
         status.icon = service.health()?.let { CollabUi.Dot(CollabUi.healthColor(it)) }
         updateSessionTime()
 
@@ -432,7 +452,7 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
             override fun isSelected(e: AnActionEvent) = logArea.lineWrap
             override fun setSelected(e: AnActionEvent, state: Boolean) {
                 logArea.lineWrap = state
-                PropertiesComponent.getInstance().setValue(WRAP_KEY, state, false)
+                PropertiesComponent.getInstance().setValue(WRAP_KEY, state, true)
             }
             override fun getActionUpdateThread() = ActionUpdateThread.EDT
         }

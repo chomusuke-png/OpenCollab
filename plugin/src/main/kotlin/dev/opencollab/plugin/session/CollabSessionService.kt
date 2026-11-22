@@ -717,11 +717,23 @@ class CollabSessionService(private val project: Project) : Disposable {
     /** Open "let in?" prompts by join request id. */
     private val joinPrompts = ConcurrentHashMap<String, Notification>()
 
+    /** "tls(direct:/192.168.1.12:49442)" → "192.168.1.12"; through the relay the address is the relay's, so say that. */
+    internal fun shownAddress(description: String): String {
+        val inner = description.removePrefix("tls(").removeSuffix(")")
+        if (inner.startsWith("relay")) return message("join.request.via.relay")
+        val address = inner.substringAfterLast('/')
+        return when {
+            address.startsWith("[") -> address.substringBefore("]") + "]" // IPv6 with port
+            address.count { it == ':' } == 1 -> address.substringBefore(':')
+            else -> address
+        }
+    }
+
     /** Session thread: someone with a valid invitation waits to be let in. */
     private fun askToLetIn(request: JoinRequestInfo) {
         ApplicationManager.getApplication().invokeLater({
             val hosting = mode as? Mode.Hosting ?: return@invokeLater
-            val text = message("join.request", StringUtil.escapeXmlEntities(request.displayName), roleName(request.role), StringUtil.escapeXmlEntities(request.address))
+            val text = message("join.request", StringUtil.escapeXmlEntities(request.displayName), roleName(request.role), StringUtil.escapeXmlEntities(shownAddress(request.address)))
             val notification = NotificationGroupManager.getInstance().getNotificationGroup("OpenCollab")
                 .createNotification(message("join.request.title"), text, NotificationType.WARNING)
             notification.addAction(NotificationAction.createSimpleExpiring(message("join.request.accept")) {

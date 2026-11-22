@@ -142,7 +142,14 @@ class ChatPanel(private val service: CollabSessionService) : JPanel(BorderLayout
         input.isEnabled = inSession && service.canChat
         send.isEnabled = inSession && service.canChat
         updateTypingLabel()
-        input.emptyText.text = message(if (inSession) "chat.placeholder" else "chat.not.in.session")
+        input.emptyText.text = message(
+            when {
+                !inSession -> "chat.not.in.session"
+                !service.canChat -> "chat.muted"
+                else -> "chat.placeholder"
+            },
+        )
+        input.toolTipText = if (inSession && !service.canChat) message("chat.muted") else null
         if (!inSession) showHint(null)
 
         val entries = service.chat()

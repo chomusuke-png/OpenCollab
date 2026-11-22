@@ -17,7 +17,6 @@ import com.intellij.ui.dsl.builder.rows
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.ui.components.JBCheckBox
-import com.intellij.ui.components.JBTextField
 import com.intellij.ui.dsl.builder.Cell
 import com.intellij.ui.dsl.builder.selected
 import dev.opencollab.core.files.SharingRules
@@ -29,8 +28,12 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
     private val settings = OpenCollabSettings.getInstance()
     private val secretField = JBPasswordField()
 
+    /** Address fields, shown as dots unless addresses are shown (streaming-safe) or being edited. */
+    private val addressFields = mutableListOf<AddressField>()
+    private fun addressField() = AddressField(settings.state.showAddresses).also { addressFields += it }
+
     /** Fills [field] with this machine's public IP, queried off the UI thread. */
-    private fun detectPublicIp(field: JBTextField, service: String) {
+    private fun detectPublicIp(field: AddressField, service: String) {
         val modality = ModalityState.stateForComponent(field)
         field.emptyText.text = message("settings.forwarding.detecting")
         ApplicationManager.getApplication().executeOnPooledThread {
@@ -84,6 +87,7 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
                 row {
                     checkBox(message("settings.show.addresses")).bindSelected(s::showAddresses)
                         .comment(message("settings.show.addresses.comment"), MAX_LINE_LENGTH_WORD_WRAP)
+                        .onChanged { box -> addressFields.forEach { it.shown = box.isSelected } }
                 }
                 row {
                     checkBox(message("settings.invite.single")).bindSelected(s::singleUseInvites)
@@ -121,27 +125,27 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
                     row { directEnabled = checkBox(message("settings.direct.enable")).bindSelected(s::enableDirect) }
                     indent {
                         row(message("settings.listen.address")) {
-                            textField().bindText(s::bindAddress).comment(message("settings.listen.address.comment"), MAX_LINE_LENGTH_WORD_WRAP)
+                            cell(addressField()).bindText(s::bindAddress).comment(message("settings.listen.address.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                         }.enabledIf(directEnabled.selected)
                         row(message("settings.port")) {
                             intTextField(0..65535).bindIntText(s::port).comment(message("settings.port.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                         }.enabledIf(directEnabled.selected)
                         row(message("settings.advertised")) {
-                            textField().bindText(s::advertisedHosts).columns(COLUMNS_LARGE).comment(message("settings.advertised.comment"), MAX_LINE_LENGTH_WORD_WRAP)
+                            cell(addressField()).bindText(s::advertisedHosts).columns(COLUMNS_LARGE).comment(message("settings.advertised.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                         }.enabledIf(directEnabled.selected)
                     }
                 }.apply { expanded = s.enableDirect && (s.bindAddress != "0.0.0.0" || s.advertisedHosts.isNotBlank()) }
 
                 collapsibleGroup(message("settings.group.forwarding")) {
                     lateinit var forwardingEnabled: Cell<JBCheckBox>
-                    lateinit var publicField: Cell<JBTextField>
+                    lateinit var publicField: Cell<AddressField>
                     row {
                         forwardingEnabled = checkBox(message("settings.forwarding.enable")).bindSelected(s::portForwarding)
                             .comment(message("settings.forwarding.enable.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                     }
                     indent {
                         row(message("settings.forwarding.public")) {
-                            publicField = textField().bindText(s::publicAddress).columns(COLUMNS_LARGE)
+                            publicField = cell(addressField()).bindText(s::publicAddress).columns(COLUMNS_LARGE)
                                 .comment(message("settings.forwarding.public.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                             button(message("settings.forwarding.detect")) { detectPublicIp(publicField.component, s.publicIpService) }
                         }.enabledIf(forwardingEnabled.selected)
@@ -159,7 +163,7 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
                     row { relayEnabled = checkBox(message("settings.relay.enable")).bindSelected(s::enableRelay) }
                     indent {
                         row(message("settings.relay.url")) {
-                            textField().bindText(s::relayUrl).columns(COLUMNS_LARGE).comment("wss://relay.example.com:8443", MAX_LINE_LENGTH_WORD_WRAP)
+                            cell(addressField()).bindText(s::relayUrl).columns(COLUMNS_LARGE).comment("wss://relay.example.com:8443", MAX_LINE_LENGTH_WORD_WRAP)
                                 .validationOnApply {
                                     if (relayEnabled.component.isSelected && !it.text.trim().startsWith("wss://")) error(message("settings.relay.url.invalid")) else null
                                 }
@@ -214,6 +218,34 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
         if (secret == known) return
         storedSecret = secret
         ApplicationManager.getApplication().executeOnPooledThread { settings.relaySecret = secret }
+    }
+}
+
+/**
+ * A text field for an IP address, host name or URL. While addresses are hidden it shows dots, like
+ * a password, except while it has the focus, so the address can still be typed and checked.
+ */
+internal class AddressField(shown: Boolean) : JBPasswordField() {
+    private val dot = echoChar
+
+    var shown: Boolean = shown
+        set(value) { field = value; update() }
+
+    init {
+        addFocusListener(object : java.awt.event.FocusAdapter() {
+            override fun focusGained(e: java.awt.event.FocusEvent) = update()
+            override fun focusLost(e: java.awt.event.FocusEvent) = update()
+        })
+        update()
+    }
+
+    val revealed: Boolean get() = shown || isFocusOwner
+
+    private fun update() {
+        echoChar = if (revealed) 0.toChar() else dot
+        // A password field refuses copy and cut; an address shown on screen can be copied.
+        putClientProperty("JPasswordField.cutCopyAllowed", revealed)
+        repaint()
     }
 }
 

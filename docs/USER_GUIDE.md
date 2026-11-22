@@ -44,7 +44,7 @@ La interfaz del plugin está en **inglés** y **español** y sigue el idioma del
 | Ask me before anyone joins | While hosting, each person with an invitation waits until you click *Let in* (default on) |
 | Invitations expire after (minutes) | Default 1440 (24 h); 0 = when the session ends. People already in the session stay |
 | Each invitation lets only one person join | Copy a new invitation per person; a leaked one stops working after its first use (default off) |
-| Show IP addresses and host names | Off by default: addresses appear partly hidden (`•••.•••.•••.54`, `my•••.duckdns.org`) in the tool window, join requests and notifications, so a stream or shared screen does not reveal them. The IDE log file always keeps them in full |
+| Show IP addresses and host names | Off by default: addresses appear partly hidden (`•••.•••.•••.54`, `my•••.duckdns.org`) in the tool window, join requests and notifications, and the address fields on the settings page show dots until you click in them, so a stream or shared screen does not reveal them. The IDE log file always keeps them in full |
 
 ## Start a session (host)
 
@@ -140,7 +140,9 @@ OpenCollab mirror, so it can never overwrite your own data.
   tree, with passed, failed and ignored tests, failure messages and stack traces;
   double-clicking a test opens it in the guest's copy.
 * **Run on host:** an editor clicks **Run on host ▾** in the OpenCollab panel and picks one of the
-  host's run configurations or *Build project*. The host gets a notification — *Allow*, *Allow
+  host's run configurations or *Build project*. Besides the saved configurations, the list has
+  the temporary ones the host's IDE makes when they run a file or a test from the editor, marked
+  *(temporary)*; the IDE keeps only the last few. The host gets a notification — *Allow*, *Allow
   for this session*, or *Deny* — and nothing runs without that answer; unanswered requests expire
   after two minutes. Everything runs on the host's machine, so the project stays in one place
   and in sync. Viewers can watch but not ask.

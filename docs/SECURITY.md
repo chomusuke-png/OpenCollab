@@ -60,8 +60,8 @@ arbitrary filesystem access on the host; single commands run only after the host
   permissions the host gave them, recognised by their IDE installation id or their name. Both can
   be changed by a determined person, so keep join approval on and remove or refuse them again.
 * **Addresses on screen** are partly hidden by default (tool window, join requests,
-  notifications) so streams do not reveal them; the IDE log file keeps them in full, and the
-  settings page still shows the addresses typed there.
+  notifications) so streams do not reveal them, and the address fields on the settings page show
+  dots except while you type in them; the IDE log file keeps them in full.
 * **Editors are powerful.** See the trust assumptions above.
 * **Relay metadata.** The relay sees IP addresses, room ids, and the timing and size of traffic.
 * **Self-signed relays** require pinning the fingerprint; a relay started with `--self-signed`

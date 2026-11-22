@@ -139,13 +139,17 @@ class HostConsoleSharing(
         val map = LinkedHashMap<String, RunnerAndConfigurationSettings?>()
         val list = mutableListOf(RunTarget(BUILD_ID, message("console.build.project"), RunTargetKind.BUILD))
         map[BUILD_ID] = null
-        RunManager.getInstance(project).allSettings.filter { !it.isTemporary }.forEach { settings ->
+        // Saved configurations first, then the temporary ones the IDE makes when you run a file or
+        // a test from the editor (it keeps the last few and replaces older ones).
+        val (temporary, saved) = RunManager.getInstance(project).allSettings.partition { it.isTemporary }
+        (saved + temporary).forEach { settings ->
             // Stable per configuration: a request keeps meaning the same configuration even if
             // others are added or removed before the host answers.
             val id = targetId(settings)
             if (id in map) return@forEach
             map[id] = settings
-            list += RunTarget(id, settings.name.take(200).ifBlank { "?" }, RunTargetKind.CONFIGURATION)
+            val name = settings.name.take(180).ifBlank { "?" }
+            list += RunTarget(id, if (settings.isTemporary) message("console.target.temporary", name) else name, RunTargetKind.CONFIGURATION)
         }
         targets = map
         session.setRunTargets(list)

@@ -1,6 +1,9 @@
 package dev.opencollab.plugin
 
 import com.intellij.execution.ExecutionManager
+import com.intellij.execution.RunManager
+import com.intellij.execution.compound.CompoundRunConfigurationType
+import com.intellij.execution.configurations.ConfigurationTypeUtil
 import com.intellij.execution.Executor
 import com.intellij.execution.configurations.RunProfile
 import com.intellij.execution.configurations.RunProfileState
@@ -18,6 +21,7 @@ import com.intellij.testFramework.PlatformTestUtil
 import dev.opencollab.core.files.ProjectFiles
 import dev.opencollab.core.files.SharingRules
 import dev.opencollab.core.protocol.Message
+import dev.opencollab.core.protocol.RunTarget
 import dev.opencollab.core.session.ClientHandler
 import dev.opencollab.core.session.ClientState
 import dev.opencollab.core.session.CollabClient
@@ -84,6 +88,40 @@ class HostConsoleSharingTest : HeavyPlatformTestCase() {
         assertEquals(0, exits.values.single())
         assertTrue("output reached the guest: <${output.values.single()}>", output.values.single().contains("Hello World"))
     }
+
+    fun testGuestsSeeSavedAndTemporaryRunConfigurations() {
+        val root = tempDir("oc-targets")
+        val scheduler = SystemScheduler()
+        val session = HostSession(HostConfig("demo"), ProjectFiles(root, SharingRules()), DocumentSource { null }, scheduler)
+        Disposer.register(testRootDisposable) { session.close(); scheduler.close() }
+        val runManager = RunManager.getInstance(project)
+        val factory = ConfigurationTypeUtil.findConfigurationType(CompoundRunConfigurationType::class.java).configurationFactories.first()
+        val saved = runManager.createConfiguration("Saved one", factory)
+        runManager.addConfiguration(saved)
+        val temporary = runManager.createConfiguration("Main", factory).apply { isTemporary = true }
+        runManager.addConfiguration(temporary)
+        Disposer.register(testRootDisposable) { runManager.removeConfiguration(saved); runManager.removeConfiguration(temporary) }
+
+        val sharing = HostConsoleSharing(project, root, session, shareOutput = false) {}
+        Disposer.register(testRootDisposable, sharing)
+        sharing.install()
+
+        val guest = object : ClientHandler {
+            override fun onRunTargets(targets: List<RunTarget>) { lastTargets = targets }
+        }
+        val (guestEnd, sessionEnd) = InMemoryTransport.pair("guest", "host<-guest")
+        session.accept(sessionEnd)
+        val client = CollabClient(Connector { guestEnd }, "Guest", session.config.editorToken, guest, SerialExecutor("guest-docs"), scheduler, mirror = null, reconnectPolicy = null)
+        Disposer.register(testRootDisposable) { client.close() }
+        client.start()
+        waitFor("run targets") { lastTargets.size >= 3 }
+        val targets = lastTargets
+        val names = targets.map { it.name }
+        assertEquals(listOf(OpenCollabBundle.message("console.build.project"), "Saved one", OpenCollabBundle.message("console.target.temporary", "Main")), names)
+        assertEquals(HostConsoleSharing.targetId(temporary), targets.last().id)
+    }
+
+    @Volatile private var lastTargets: List<RunTarget> = emptyList()
 
     private fun waitFor(what: String, condition: () -> Boolean) {
         val deadline = System.currentTimeMillis() + 10_000

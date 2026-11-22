@@ -1,0 +1,46 @@
+# OpenCollab relay behind Caddy, which gets and renews a Let's Encrypt certificate for your
+# domain. Hosts and guests need no fingerprint: the certificate is checked like any website's.
+#
+# Needs a domain whose DNS points to this server, and ports 80 and 443 open.
+#
+#   openssl rand -base64 32 > relay-secret.txt
+#   RELAY_DOMAIN=relay.example.com docker compose -f compose.caddy.yml up -d --build
+#
+# Relay URL in the plugin: wss://relay.example.com
+services:
+  relay:
+    build:
+      context: ../..
+      dockerfile: relay-server/Dockerfile
+      args:
+        VERSION: ${OPENCOLLAB_VERSION:-dev}
+    image: opencollab-relay:${OPENCOLLAB_VERSION:-dev}
+    restart: unless-stopped
+    # Plain WebSocket on the loopback only; Caddy shares this container's network and does TLS.
+    command: ["--plain-behind-proxy", "--bind", "127.0.0.1", "--port", "8080", "--host-secret-file", "/run/secrets/relay_secret"]
+    ports:
+      - "80:80"
+      - "443:443"
+    secrets:
+      - relay_secret
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    network_mode: service:relay
+    depends_on:
+      - relay
+    environment:
+      RELAY_DOMAIN: ${RELAY_DOMAIN:?Set RELAY_DOMAIN to the relay's domain, e.g. relay.example.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:
+
+secrets:
+  relay_secret:
+    file: ./relay-secret.txt

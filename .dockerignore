@@ -1,0 +1,12 @@
+# Only core, transport and relay-server are needed to build the relay image.
+.git
+.github
+.gradle
+.idea
+.intellijPlatform
+.kotlin
+**/build
+**/*.iml
+docs
+plugin
+relay-server/docker

@@ -24,7 +24,7 @@ other's cursors and selections, and navigate the project in their own IDE.
 | Document | Contents |
 |---|---|
 | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Install the ZIP, start a session, invite people, roles, sharing rules |
-| [docs/RELAY_SERVER.md](docs/RELAY_SERVER.md) | Deploy and configure the self-hosted relay |
+| [docs/RELAY_SERVER.md](docs/RELAY_SERVER.md) | Deploy and configure the self-hosted relay (JAR, systemd or Docker) |
 | [docs/DEVELOPER.md](docs/DEVELOPER.md) | Build, test, run, architecture, module layout |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | Wire protocol and synchronisation algorithm |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat model, what is protected, known limits |
@@ -83,7 +83,7 @@ release as an ordinary plugin update. This needs the repository to be public.
 OpenCollab/
 ├── core/          IntelliJ-independent protocol, OT engine, file sync, permissions, sessions
 ├── transport/     TLS WebSocket transports, relay client, end-to-end TLS tunnel, invitations
-├── relay-server/  Self-hosted signaling/relay server (runnable fat JAR)
+├── relay-server/  Self-hosted signaling/relay server (runnable fat JAR, Dockerfile, compose files)
 ├── plugin/        IntelliJ IDEA plugin (tool window, settings, editor/VFS bridge)
 └── docs/          User, developer, protocol, security and relay documentation
 ```

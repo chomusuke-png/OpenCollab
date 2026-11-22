@@ -55,7 +55,10 @@ details) and messages sent over the network stay in English.
 
 `.github/workflows/ci.yml` runs on every push to `main` and every pull request: `./gradlew check
 buildPlugin` (all modules and their tests) and then `:plugin:verifyPlugin`, on Linux with Java 21
-and 25. It checks out the full history because the version comes from the release tags. When a
+and 25. It checks out the full history because the version comes from the release tags. A second
+job builds the relay's Docker image, checks both compose files and starts the image twice on one
+volume to see that TLS answers with the printed fingerprint and that the kept certificate survives
+a restart. When a
 run fails, the test reports are attached to it; every run attaches the built plugin ZIP. Release
 only from a commit whose run passed.
 

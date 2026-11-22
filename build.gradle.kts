@@ -11,10 +11,16 @@ plugins {
 // "feat" raises MINOR, anything else PATCH. `publishRelease` builds exactly that version; every
 // other build is "<next>-dev.<commits since the tag>", so local builds never use up a number.
 
-fun git(vararg args: String): String = providers.exec {
-    commandLine("git", *args)
-    isIgnoreExitValue = true
-}.standardOutput.asText.get().trim()
+// Without git or a checkout (a Docker build, a source archive) there are no tags: pass the
+// version with -PbuildVersion=X.Y.Z.
+fun git(vararg args: String): String = try {
+    providers.exec {
+        commandLine("git", *args)
+        isIgnoreExitValue = true
+    }.standardOutput.asText.get().trim()
+} catch (_: Exception) {
+    ""
+}
 
 val releaseTag = Regex("""v(\d+)\.(\d+)\.(\d+)""")
 val lastTag: String? = git("describe", "--tags", "--abbrev=0", "--match", "v[0-9]*.[0-9]*.[0-9]*")
@@ -41,9 +47,11 @@ val releasing = gradle.startParameter.taskNames.any { it.substringAfterLast(':')
 /** Uncommitted changes: even on a release tag, this build is not that release. */
 val dirty = git("status", "--porcelain").isNotEmpty()
 
+val buildVersion: String? = providers.gradleProperty("buildVersion").orNull?.takeIf { it.isNotBlank() }
+
 allprojects {
     group = "dev.opencollab"
-    version = if (releasing || (commitsSinceTag.isEmpty() && !dirty)) nextVersion else "$nextVersion-dev.${commitsSinceTag.size}"
+    version = if (buildVersion != null) buildVersion else if (releasing || (commitsSinceTag.isEmpty() && !dirty)) nextVersion else "$nextVersion-dev.${commitsSinceTag.size}"
 }
 
 extra["lastReleaseTag"] = lastTag ?: ""

@@ -6,3 +6,7 @@ out/
 .intellijPlatform/
 local.properties
 .kotlin/
+
+# Relay secrets for the Docker compose files
+relay-server/docker/relay-secret.txt
+relay-server/docker/.env

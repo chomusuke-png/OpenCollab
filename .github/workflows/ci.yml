@@ -54,3 +54,50 @@ jobs:
           name: OpenCollab-plugin
           path: plugin/build/distributions/*.zip
           retention-days: 14
+
+  relay-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the compose files
+        working-directory: relay-server/docker
+        run: |
+          echo "ci-only-secret-0123456789" > relay-secret.txt
+          docker compose -f compose.yml config --quiet
+          RELAY_DOMAIN=relay.example.com docker compose -f compose.caddy.yml config --quiet
+
+      - name: Build the image
+        run: docker build -f relay-server/Dockerfile --build-arg VERSION=ci -t opencollab-relay:ci .
+
+      # Starts the relay twice on the same volume: TLS must answer with the fingerprint it
+      # prints, and the kept certificate must give the same fingerprint after a restart.
+      - name: Smoke test
+        run: |
+          fingerprint() {
+            for i in $(seq 1 30); do
+              printed=$(docker logs relay 2>&1 | sed -n 's/.*fingerprint (SHA-256): //p' | tail -1)
+              [ -n "$printed" ] && break
+              sleep 1
+            done
+            for i in $(seq 1 30); do
+              served=$(openssl s_client -connect 127.0.0.1:8443 </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256 2>/dev/null | sed 's/.*=//')
+              [ -n "$served" ] && break
+              sleep 1
+            done
+            [ -n "$printed" ] && [ "$printed" = "$served" ] || { docker logs relay >&2; echo "printed '$printed' served '$served'" >&2; exit 1; }
+            echo "$served"
+          }
+          start() {
+            docker run -d --name relay -p 8443:8443 -v relay-data:/data opencollab-relay:ci \
+              --self-signed --keep-certificate /data/relay.p12 --allow-anonymous-hosts
+          }
+          start
+          first=$(fingerprint)
+          docker rm -f relay
+          start
+          second=$(fingerprint)
+          docker rm -f relay
+          echo "first $first"; echo "second $second"
+          [ "$first" = "$second" ]

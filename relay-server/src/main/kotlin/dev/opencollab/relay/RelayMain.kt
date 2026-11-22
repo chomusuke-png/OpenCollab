@@ -15,6 +15,10 @@ TLS (choose one):
                                 (password from env OPENCOLLAB_RELAY_KEYSTORE_PASSWORD)
   --self-signed                 Generate a self-signed certificate at startup and print its
                                 fingerprint; clients must pin it ("Relay certificate fingerprint")
+    --keep-certificate <file>   With --self-signed: keep the certificate in this PKCS#12 file and
+                                reuse it, so the fingerprint stays the same across restarts. A new
+                                one is made when the file is missing or the certificate expired.
+                                (password from env OPENCOLLAB_RELAY_KEYSTORE_PASSWORD, or none)
   --plain-behind-proxy          Listen WITHOUT TLS. Only allowed with --bind 127.0.0.1/::1, for use
                                 behind a local TLS-terminating reverse proxy (nginx, Caddy, ...)
 
@@ -51,6 +55,8 @@ fun main(args: Array<String>) {
     val tlsChoices = listOf(opts.containsKey("--keystore"), "--self-signed" in flags, "--plain-behind-proxy" in flags).count { it }
     if (tlsChoices != 1) fail("Choose exactly one of --keystore, --self-signed, --plain-behind-proxy")
 
+    if (opts.containsKey("--keep-certificate") && "--self-signed" !in flags) fail("--keep-certificate only works with --self-signed")
+
     val tls = when {
         opts.containsKey("--keystore") -> {
             val pw = System.getenv("OPENCOLLAB_RELAY_KEYSTORE_PASSWORD") ?: fail("Set OPENCOLLAB_RELAY_KEYSTORE_PASSWORD")
@@ -59,7 +65,8 @@ fun main(args: Array<String>) {
             id.serverContext()
         }
         "--self-signed" in flags -> {
-            val id = TlsIdentity.ephemeral("OpenCollab Relay", validityDays = 365)
+            val kept = opts["--keep-certificate"]?.let { Path.of(it) }
+            val id = if (kept != null) keptCertificate(kept) else TlsIdentity.ephemeral("OpenCollab Relay", validityDays = 365)
             println("Self-signed relay certificate fingerprint (SHA-256): ${id.fingerprint}")
             println("Configure this fingerprint in each IDE (Settings > Tools > OpenCollab > Relay certificate fingerprint).")
             id.serverContext()
@@ -91,6 +98,34 @@ fun main(args: Array<String>) {
     Runtime.getRuntime().addShutdownHook(Thread { server.stop() })
     Thread.currentThread().join()
 }
+
+/** The certificate kept in [file], or a new one saved there when it is missing or expired. */
+private fun keptCertificate(file: Path): TlsIdentity {
+    val password = (System.getenv("OPENCOLLAB_RELAY_KEYSTORE_PASSWORD") ?: "").toCharArray()
+    if (Files.exists(file)) {
+        val id = try {
+            TlsIdentity.fromPkcs12(file, password)
+        } catch (e: Exception) {
+            fail("Cannot read the kept certificate $file (${e.message}). Check OPENCOLLAB_RELAY_KEYSTORE_PASSWORD, or delete the file to make a new certificate.")
+        }
+        // Renew a few days early, so clients do not meet an expired certificate.
+        if (id.certificate.notAfter.time - System.currentTimeMillis() > RENEW_BEFORE_MILLIS) {
+            println("Using the kept certificate in $file (valid until ${id.certificate.notAfter.toInstant()}).")
+            return id
+        }
+        println("The kept certificate in $file expires soon: making a new one. Hosts must enter the new fingerprint.")
+    }
+    val id = TlsIdentity.ephemeral("OpenCollab Relay", validityDays = 825)
+    try {
+        id.saveAsPkcs12(file, password)
+    } catch (e: Exception) {
+        fail("Cannot save the certificate to $file: ${e.message}")
+    }
+    println("Saved a new certificate in $file (valid until ${id.certificate.notAfter.toInstant()}).")
+    return id
+}
+
+private const val RENEW_BEFORE_MILLIS = 7L * 24 * 3_600_000
 
 private fun fail(message: String): Nothing {
     System.err.println("Error: $message")

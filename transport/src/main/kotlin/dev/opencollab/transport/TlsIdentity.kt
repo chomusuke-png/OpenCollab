@@ -54,6 +54,22 @@ class TlsIdentity private constructor(
         return ctx
     }
 
+    /** Saves the certificate and key as a PKCS#12 keystore readable only by its owner where possible. */
+    fun saveAsPkcs12(path: Path, password: CharArray) {
+        val ks = KeyStore.getInstance("PKCS12")
+        ks.load(null, null)
+        ks.setKeyEntry("opencollab", privateKey, password, chain)
+        path.toAbsolutePath().parent?.let { Files.createDirectories(it) }
+        val tmp = Files.createTempFile(path.toAbsolutePath().parent, ".opencollab", ".p12")
+        try {
+            runCatching { Files.setPosixFilePermissions(tmp, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")) }
+            Files.newOutputStream(tmp).use { ks.store(it, password) }
+            Files.move(tmp, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+        } finally {
+            Files.deleteIfExists(tmp)
+        }
+    }
+
     companion object {
         fun ephemeral(commonName: String = "OpenCollab Host", validityDays: Long = 7): TlsIdentity {
             val kpg = KeyPairGenerator.getInstance("EC")

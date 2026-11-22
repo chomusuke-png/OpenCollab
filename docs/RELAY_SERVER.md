@@ -63,8 +63,9 @@ java -jar opencollab-relay-X.Y.Z-all.jar --self-signed --host-secret-file relay-
 
 The relay prints `Self-signed relay certificate fingerprint (SHA-256): AB:CD:…`. Enter it in
 *Relay certificate fingerprint* on the host. The fingerprint is copied into invitations, so guests
-pin it automatically. A new fingerprint is generated at every start; use a PKCS#12 file
-(`--keystore`) to keep it stable.
+pin it automatically. A new fingerprint is generated at every start unless you add
+`--keep-certificate relay.p12`: the certificate is then saved in that file and reused, so the
+fingerprint stays the same (a new one is made when it is about to expire, after about two years).
 
 ### Option C — behind a TLS-terminating reverse proxy
 
@@ -90,6 +91,7 @@ relay.example.com {
 | `--port` | `8443` | Listen port |
 | `--keystore <p12>` | | Certificate + key; password in `OPENCOLLAB_RELAY_KEYSTORE_PASSWORD` |
 | `--self-signed` | | Generate a certificate at startup and print its fingerprint |
+| `--keep-certificate <file>` | | With `--self-signed`: save the certificate there and reuse it |
 | `--plain-behind-proxy` | | No TLS; loopback only |
 | `--host-secret-file <file>` | | Secret required from hosts (or env `OPENCOLLAB_RELAY_SECRET`) |
 | `--allow-anonymous-hosts` | off | Allow rooms without a secret (not for the internet) |
@@ -117,6 +119,74 @@ ProtectHome=true
 [Install]
 WantedBy=multi-user.target
 ```
+
+## Docker
+
+The image builds the relay from source and runs it as an unprivileged user. Everything is in
+`relay-server/`: the `Dockerfile` and, in `relay-server/docker/`, two compose files. Run the
+commands below from that folder on the server, after cloning the repository.
+
+First create the host secret (hosts enter it in *Settings | Tools | OpenCollab*):
+
+```bash
+cd relay-server/docker
+openssl rand -base64 32 > relay-secret.txt
+```
+
+The container reads it as a user with id 10001, so keep the file readable (the default
+permissions are fine; do not `chmod 600` it unless you also `chown 10001` it). It is in
+`.gitignore`.
+
+### With a domain: automatic HTTPS (recommended)
+
+`compose.caddy.yml` puts [Caddy](https://caddyserver.com) in front of the relay. Caddy gets a
+free Let's Encrypt certificate for your domain and renews it. Point the domain's DNS to the
+server, open ports 80 and 443, then:
+
+```bash
+RELAY_DOMAIN=relay.example.com docker compose -f compose.caddy.yml up -d --build
+```
+
+In the plugin: *Relay URL* `wss://relay.example.com`, *Relay certificate fingerprint* empty.
+
+The relay only listens on the container's loopback interface; Caddy shares the container's
+network and is the only thing reachable from outside. The relay's logs then show Caddy's local
+address instead of each person's address.
+
+### Without a domain: self-signed
+
+`compose.yml` runs the relay alone with a self-signed certificate kept in a volume, so the
+fingerprint does not change when the container restarts or is rebuilt:
+
+```bash
+docker compose up -d --build
+docker compose logs relay   # Self-signed relay certificate fingerprint (SHA-256): AB:CD:...
+```
+
+In the plugin: *Relay URL* `wss://<server address>:8443`, *Relay certificate fingerprint* the
+printed value. Set `RELAY_PORT` to publish another port. Deleting the `relay-data` volume makes a
+new certificate, and hosts must then enter the new fingerprint.
+
+### Updating and other settings
+
+```bash
+git pull && docker compose up -d --build     # add -f compose.caddy.yml if you use it
+```
+
+Set `OPENCOLLAB_VERSION` to label the image with a version (it defaults to `dev`). To pass other
+options (`--max-rooms`, `--max-peers`, your own `--keystore`), override `command:` in the compose
+file; the image's default command is
+`--self-signed --keep-certificate /data/relay.p12 --host-secret-file /run/secrets/relay_secret`.
+
+Without compose:
+
+```bash
+docker build -f relay-server/Dockerfile -t opencollab-relay .   # from the repository root
+docker run -d --name opencollab-relay --restart unless-stopped -p 8443:8443 -v relay-data:/data   -v "$PWD/relay-server/docker/relay-secret.txt:/run/secrets/relay_secret:ro"   opencollab-relay
+```
+
+(Mount the secret as a file rather than passing `OPENCOLLAB_RELAY_SECRET` with `-e`, which
+`docker inspect` shows to anyone who can use Docker on the server.)
 
 ## Behaviour and limits
 

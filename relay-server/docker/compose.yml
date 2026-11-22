@@ -1,0 +1,35 @@
+# OpenCollab relay with its own self-signed certificate, kept in a volume so the fingerprint
+# stays the same across restarts. Hosts enter that fingerprint in the plugin settings.
+#
+#   openssl rand -base64 32 > relay-secret.txt
+#   docker compose up -d --build
+#   docker compose logs relay        # shows the fingerprint
+#
+# For a public domain with a free Let's Encrypt certificate, use compose.caddy.yml instead.
+services:
+  relay:
+    build:
+      context: ../..
+      dockerfile: relay-server/Dockerfile
+      args:
+        VERSION: ${OPENCOLLAB_VERSION:-dev}
+    image: opencollab-relay:${OPENCOLLAB_VERSION:-dev}
+    restart: unless-stopped
+    ports:
+      - "${RELAY_PORT:-8443}:8443"
+    volumes:
+      - relay-data:/data
+    secrets:
+      - relay_secret
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8443"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  relay-data:
+
+secrets:
+  relay_secret:
+    file: ./relay-secret.txt

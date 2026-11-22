@@ -10,6 +10,7 @@ import kotlinx.serialization.json.JsonElement
  * v4: session chat relayed and stamped by the host, with recent history for newcomers.
  * v5: shared consoles (the host's run and build output) and guest requests to run on the host.
  * v6: every edit is sent at once (several operations in flight per author); resuming lists them all.
+ *     Later additions travel as optional [Features] (join approval, permissions).
  */
 const val PROTOCOL_VERSION = 6
 
@@ -29,8 +30,31 @@ object Features {
     const val COMMANDS = "commands"
     /** The host's code style ([Message.CodeStyle]). */
     const val CODE_STYLE = "codeStyle"
+    /** The host may hold a newcomer until its user accepts them ([Message.JoinPending]). */
+    const val JOIN_APPROVAL = "joinApproval"
+    /** Per-participant permissions ([ParticipantInfo.permissions], [Message.PermissionsChanged]). */
+    const val PERMISSIONS = "permissions"
 
-    val ALL = listOf(TESTS, DEBUG, VCS, COMMANDS, CODE_STYLE)
+    val ALL = listOf(TESTS, DEBUG, VCS, COMMANDS, CODE_STYLE, JOIN_APPROVAL, PERMISSIONS)
+}
+
+/**
+ * What a participant may do besides editing (which its [Role] decides). The host grants a role's
+ * defaults on joining and may change them per participant; it checks them on every request.
+ */
+object Permission {
+    /** Ask the host to run one of its run configurations or build the project. */
+    const val RUN = "run"
+    /** Ask the host to run a shell command (each one still needs the host's approval). */
+    const val COMMANDS = "commands"
+    /** Add and remove breakpoints in the host's debugger. */
+    const val DEBUG = "debug"
+    /** Write in the session chat. */
+    const val CHAT = "chat"
+
+    val ALL = listOf(RUN, COMMANDS, DEBUG, CHAT)
+
+    fun defaultsFor(role: Role): Set<String> = if (role.canEdit) ALL.toSet() else setOf(CHAT)
 }
 
 /** Stands for the host's project folder in shared console text; each guest puts its own folder back. */
@@ -49,7 +73,13 @@ data class ParticipantInfo(
     val displayName: String,
     val role: Role,
     val colorIndex: Int,
-)
+    /** [Permission]s; null means the defaults of [role] (and hosts before permissions existed). */
+    val permissions: List<String>? = null,
+) {
+    val effectivePermissions: Set<String> get() = permissions?.toSet() ?: Permission.defaultsFor(role)
+
+    fun may(permission: String): Boolean = permission in effectivePermissions
+}
 
 /** The host's sharing rules, sent to guests so they filter local changes the same way. */
 @Serializable
@@ -176,6 +206,18 @@ sealed class Message {
 
     @Serializable @SerialName("rejected")
     data class HandshakeRejected(val reason: String) : Message()
+
+    /** The invitation is valid; the host's user still has to accept this participant ([Features.JOIN_APPROVAL]). */
+    @Serializable @SerialName("joinPending")
+    data class JoinPending(val timeoutMillis: Long) : Message()
+
+    /** Host only: replaces a participant's [Permission]s. */
+    @Serializable @SerialName("setPermissions")
+    data class SetPermissions(val participantId: String, val permissions: List<String>) : Message()
+
+    /** A participant's [Permission]s changed ([Features.PERMISSIONS]). */
+    @Serializable @SerialName("permissionsChanged")
+    data class PermissionsChanged(val participantId: String, val permissions: List<String>) : Message()
 
     @Serializable @SerialName("participantJoined")
     data class ParticipantJoined(val participant: ParticipantInfo) : Message()

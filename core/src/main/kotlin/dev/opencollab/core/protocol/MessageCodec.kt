@@ -113,6 +113,9 @@ object MessageCodec {
                 features(m.features)
             }
             is Message.SetRole -> id(m.participantId)
+            is Message.SetPermissions -> { id(m.participantId); permissions(m.permissions) }
+            is Message.PermissionsChanged -> { id(m.participantId); permissions(m.permissions) }
+            is Message.JoinPending -> check(m.timeoutMillis >= 0, "Invalid timeout")
             is Message.RequestManifest -> id(m.requestId)
             is Message.RequestFiles -> {
                 id(m.requestId)
@@ -233,6 +236,10 @@ object MessageCodec {
         check(e.displayName.length <= MAX_NAME && e.displayName.none { it.isISOControl() }, "Invalid display name")
         check(e.id >= 0 && e.sentAtMillis >= 0, "Invalid chat entry")
         chatText(e.text)
+    }
+
+    private fun permissions(list: List<String>) {
+        check(list.size <= Permission.ALL.size && list.all { it in Permission.ALL }, "Invalid permissions")
     }
 
     private fun features(list: List<String>) {

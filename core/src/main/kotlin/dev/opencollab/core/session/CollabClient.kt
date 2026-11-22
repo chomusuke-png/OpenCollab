@@ -39,6 +39,10 @@ interface ClientHandler {
     fun onWelcome(welcome: Message.Welcome) {}
     fun onParticipantsChanged(participants: List<ParticipantInfo>) {}
     fun onRoleChanged(role: Role) {}
+    /** The invitation is valid and the host's user has to let us in; we wait up to [timeoutMillis]. */
+    fun onJoinPending(timeoutMillis: Long) {}
+    /** Our own [dev.opencollab.core.protocol.Permission]s changed. */
+    fun onPermissionsChanged(permissions: Set<String>) {}
 
     /** Apply [op] to the local editor document for [path] now (document executor). */
     fun applyRemoteEdit(path: String, op: TextOperation) {}
@@ -277,6 +281,15 @@ class CollabClient(
 
     fun setRole(participantId: String, role: Role) = send(Message.SetRole(participantId, role))
 
+    /** Host bridge only: replaces a guest's permissions. */
+    fun setPermissions(participantId: String, permissions: Set<String>) = send(Message.SetPermissions(participantId, permissions.sorted()))
+
+    /** What the host currently allows us ([dev.opencollab.core.protocol.Permission]). */
+    fun permissions(): Set<String> =
+        synchronized(participants) { participants[participantId]?.effectivePermissions } ?: dev.opencollab.core.protocol.Permission.defaultsFor(role)
+
+    fun may(permission: String): Boolean = permission in permissions()
+
     /** Tells the others whether we are typing a chat message; call again every few seconds while typing. */
     fun setChatTyping(typing: Boolean) {
         send(Message.ChatTyping(typing))
@@ -299,7 +312,7 @@ class CollabClient(
      */
     fun requestCommand(command: String): String? {
         val clean = command.trim()
-        if (!welcomed || Features.COMMANDS !in sharedFeatures) return null
+        if (!welcomed || Features.COMMANDS !in sharedFeatures || !may(dev.opencollab.core.protocol.Permission.COMMANDS)) return null
         if (clean.isEmpty() || clean.length > MessageCodec.MAX_COMMAND_CHARS || clean.any { it.isISOControl() }) return null
         val id = "cmd-${requestCounter.incrementAndGet()}"
         send(Message.CommandRequest(id, clean))
@@ -308,7 +321,7 @@ class CollabClient(
 
     /** Asks the host to add or remove a line breakpoint ([Features.DEBUG]). False if not possible now. */
     fun requestBreakpoint(path: String, line: Int, add: Boolean): Boolean {
-        if (!welcomed || Features.DEBUG !in sharedFeatures || !role.canEdit || line < 0) return false
+        if (!welcomed || Features.DEBUG !in sharedFeatures || !role.canEdit || !may(dev.opencollab.core.protocol.Permission.DEBUG) || line < 0) return false
         send(Message.BreakpointRequest(path, line, add))
         return true
     }
@@ -320,7 +333,7 @@ class CollabClient(
     fun sendChat(text: String): Boolean {
         // Control characters other than line breaks and tabs would get the message refused.
         val clean = text.filter { !it.isISOControl() || it == '\n' || it == '\t' }.trim()
-        if (clean.isEmpty() || clean.length > MessageCodec.MAX_CHAT_CHARS || !welcomed) return false
+        if (clean.isEmpty() || clean.length > MessageCodec.MAX_CHAT_CHARS || !welcomed || !may(dev.opencollab.core.protocol.Permission.CHAT)) return false
         send(Message.ChatSend(clean))
         return true
     }
@@ -430,12 +443,22 @@ class CollabClient(
                 docExecutor.execute { handler.onParticipantLeft(m.participantId) }
             }
             is Message.RoleChanged -> {
-                synchronized(participants) { participants[m.participantId]?.let { participants[m.participantId] = it.copy(role = m.role) } }
+                // Permissions fall back to the new role's defaults until the host says otherwise.
+                synchronized(participants) { participants[m.participantId]?.let { participants[m.participantId] = it.copy(role = m.role, permissions = null) } }
                 if (m.participantId == participantId) {
                     role = m.role
                     handler.onRoleChanged(m.role)
                 }
                 handler.onParticipantsChanged(participants())
+            }
+            is Message.PermissionsChanged -> {
+                synchronized(participants) { participants[m.participantId]?.let { participants[m.participantId] = it.copy(permissions = m.permissions) } }
+                if (m.participantId == participantId) handler.onPermissionsChanged(m.permissions.toSet())
+                handler.onParticipantsChanged(participants())
+            }
+            is Message.JoinPending -> {
+                setState(ClientState.CONNECTING, "Waiting for the host to let you in…")
+                handler.onJoinPending(m.timeoutMillis)
             }
             is Message.Error -> handler.onLog("Host: ${m.message}")
             is Message.Pong -> Unit

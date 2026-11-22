@@ -27,7 +27,7 @@ closes the connection.
 | Group | Messages |
 |---|---|
 | Handshake | `hello` (protocol version, display name, invitation token, optional resume key, `features`) → `welcome` (participant id, role, resume key, participants, sharing rules, file event sequence, session age, `features`) or `rejected` |
-| Membership | `participantJoined`, `participantLeft`, `roleChanged`, `setRole` (host only), `sessionEnded` |
+| Membership | `participantJoined`, `participantLeft`, `roleChanged`, `setRole` (host only), `sessionEnded`; participant infos carry `permissions` (`run`, `commands`, `debug`, `chat`; absent = the role's defaults: all for editors, `chat` for viewers) |
 | Files | `requestManifest` → `manifest`; `requestFiles` → `fileChunk`* + `filesDone` (`missing`: not on the host or not shared; `failed`: could not be sent now, e.g. a read error; at most 4 requests per participant stream at once, later ones wait in a queue of 256); `fileRequest` → `result`; `fileEvent` (host broadcast, sequenced); `resumeFiles` → replayed `fileEvent`s + `result`, or `filesResyncRequired` |
 | Documents | `openDoc` → `docState`; `op` → `ack` (+ `remoteOp` to other subscribers) or `opRejected` (`stale`, `invalid`, `forbidden`, `too-large`: the document would exceed the size limit; after `forbidden` and `too-large` the client drops its edits and resyncs); `resumeDoc` → `docCatchUp` or `docState`; `docUnavailable`; `docSaved`; `closeDoc` |
 | Presence | `presence` (sender) → `presenceBroadcast` (host stamps the sender id) |
@@ -50,6 +50,8 @@ which sends no list) keep working and simply do not get it. Unknown fields are i
 | `vcs` | `vcsStatus(branch, changes)` | The branch of the repository containing the project (null if none) and changed shared files (`added`, `modified`, `deleted`, `moved`, `unversioned`), refreshed every 2 s when it changes. |
 | `commands` | `commandRequest(requestId, command)` → `runResponse` | An editor asks to run a single-line command (≤ 1 000 chars) in a shell in the host's project folder. Like `runRequest` (same rate limit, expiry and refusal codes), but the host's user must allow each command, after reading all of it in a dialog; it then runs in a Run tab on the host and is shared as a console. |
 | `codeStyle` | `codeStyle(xml)` | The host's effective code style (IntelliJ XML, ≤ 512 Ki chars); guests use it as their copy's project code style. |
+| `joinApproval` | `joinPending(timeoutMillis)` | When the host asks before letting people in, a newcomer with a valid invitation gets `joinPending` and waits; then `welcome` (let in) or `rejected` ("did not let you join", "did not answer", "too many people are waiting"). Guests without the feature simply wait for `welcome`. Participants resuming with their resume key are not asked again. |
+| `permissions` | `setPermissions(participantId, permissions)` (host only), `permissionsChanged(participantId, permissions)` | The host replaces a guest's permissions (viewers: at most `chat`); everybody supporting the feature gets `permissionsChanged`. A role change resets them to the new role's defaults. Without the permission the host refuses `runRequest` / `commandRequest` (`runResponse` reason `not-allowed`), `breakpointRequest` and `chatSend` (`error` `chat-muted`). |
 
 The host sends the latest `debugState`, `breakpoints`, `vcsStatus` and `codeStyle` to participants
 who join later, and never sends one identical to the previous of its kind.

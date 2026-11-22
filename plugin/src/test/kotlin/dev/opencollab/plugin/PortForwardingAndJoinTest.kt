@@ -59,7 +59,7 @@ class PortForwardingAndJoinTest : HeavyPlatformTestCase() {
         LocalFileSystem.getInstance().refreshAndFindFileByNioFile(root)!!.refresh(false, true)
         val port = freePort()
         OpenCollabSettings.getInstance().state.apply {
-            enableDirect = true; enableRelay = false; bindAddress = "0.0.0.0"; this.port = port; advertisedHosts = ""
+            enableDirect = true; enableRelay = false; bindAddress = "0.0.0.0"; this.port = port; advertisedHosts = ""; approveJoins = false
             portForwarding = true; publicAddress = "localhost"; externalPort = 0 // "router" forwards the same port
         }
         val service = CollabSessionService.getInstance(project)

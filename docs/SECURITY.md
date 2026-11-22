@@ -16,9 +16,9 @@
 | Eavesdropping / tampering on the network | TLS 1.3/1.2 everywhere. Plain `ws://` is rejected by clients; the relay refuses plain mode unless bound to loopback behind a proxy |
 | Impersonating the host / MITM | Per-session self-signed certificate; guests pin its SHA-256 fingerprint from the invitation (`PinnedTrustManager`) |
 | Reading traffic on the relay | End-to-end TLS tunnel inside the relay connection (`TlsTunnel`, JSSE). The relay forwards records it cannot decrypt |
-| Strangers joining | 192-bit random invitation tokens, compared in constant time; separate editor and viewer tokens; new tokens per session; handshake timeout; participant cap |
+| Strangers joining | 192-bit random invitation tokens, compared in constant time; a new token per copied invitation, with expiry (24 h by default) and optional single use; *Revoke all invitations*; the host's approval of each newcomer (default on; at most 5 waiting, refused after 2 min); handshake timeout; participant cap. A participant resuming within 30 min keeps its place without a new approval |
 | Strangers using your relay | Relay host secret (constant-time check), room ids are 128-bit random, room and peer limits, per-peer rate limit |
-| Privilege escalation | Roles live on the host. Every operation (`op`, `fileRequest`, `setRole`, `docSaved`, `runRequest`, `commandRequest`, `breakpointRequest`) is authorised in `HostSession`, never in the UI only. A resumed participant keeps the role the host assigned, whatever token it presents. Nobody can be made host |
+| Privilege escalation | Roles and permissions live on the host. Every operation (`op`, `fileRequest`, `setRole`, `setPermissions`, `docSaved`, `runRequest`, `commandRequest`, `breakpointRequest`, `chatSend`) is authorised in `HostSession`, never in the UI only, and run requests are checked again when the host answers them. A resumed participant keeps the role and permissions the host assigned, whatever token it presents. Viewers can never be given more than the chat. Nobody can be made host |
 | Path traversal / escaping the project | `SafePath` rejects absolute paths, drive letters, `..`, `.`, empty segments, backslashes, `:` (NTFS streams), control characters, Windows device names; `resolveInside` re-checks after normalisation and refuses symbolic links or real paths outside the root, on both host and guest |
 | Leaking secrets | Default excludes (env files, keys, keystores, cloud credentials, Terraform state, local IDE files); `.git` can never be shared; excluded files are neither listed, read, written, nor broadcast; a rename into an excluded name becomes a delete for guests |
 | Guests planting code the host executes unknowingly | Guests cannot modify `.git` (hooks), IDE run configurations (`.idea`, `.run`, `*.run.xml`), wrapper scripts and CI workflows; directories containing unshared files cannot be deleted or moved by guests |
@@ -52,9 +52,10 @@ arbitrary filesystem access on the host; single commands run only after the host
 
 ## Known limitations
 
-* **Invitations are bearer secrets.** Anyone who obtains one can join while the session runs.
-  Send them privately; end the session to revoke them. Per-person invitations and an approval
-  prompt are not implemented yet.
+* **Invitations are bearer secrets.** Anyone who obtains one can ask to join until it expires, is
+  used up or is revoked. With *Ask me before anyone joins* (default) the host still has to let
+  each person in; without it, the invitation alone is enough. The prompt shows the name a person
+  chose and the address they connect from: names are not verified.
 * **Editors are powerful.** See the trust assumptions above.
 * **Relay metadata.** The relay sees IP addresses, room ids, and the timing and size of traffic.
 * **Self-signed relays** require pinning the fingerprint; a relay started with `--self-signed`

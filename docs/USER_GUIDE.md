@@ -42,6 +42,9 @@ La interfaz del plugin está en **inglés** y **español** y sigue el idioma del
 | Share run, test and build output with guests | While hosting: guests see your runs, test trees and builds, and editors can ask to run a configuration or a build (default on) |
 | Show guests the debugger, breakpoints, Git branch and changes, and code style | While hosting (default on) |
 | Let editors ask to run terminal commands here | While hosting; each command needs your approval (default on) |
+| Ask me before anyone joins | While hosting, each person with an invitation waits until you click *Let in* (default on) |
+| Invitations expire after (minutes) | Default 1440 (24 h); 0 = when the session ends. People already in the session stay |
+| Each invitation lets only one person join | Copy a new invitation per person; a leaked one stops working after its first use (default off) |
 
 ## Start a session (host)
 
@@ -52,10 +55,18 @@ La interfaz del plugin está en **inglés** y **español** y sigue el idioma del
 3. Click **Invite ▾**, choose the editor (can edit) or viewer (read only) invitation, and send
    the copied text (`oc1:…`) to the
    participant over a private channel (direct message, password manager share…). **An invitation
-   is a secret**: anybody holding it can join with that role while the session runs.
+   is a secret**: anybody holding it can ask to join with that role.
+4. When someone uses it, a notification shows their name, role and address: click **Let in** or
+   **Reject**. Unanswered requests are refused after 2 minutes, and at most 5 people can wait at
+   once.
 
-Each session uses a new random certificate and new invitation tokens; invitations stop working
-when the session ends.
+Each copied invitation is new: it expires after the time set in the settings (24 h by default) and
+can be limited to one use. **Invite ▾ > Revoke all invitations** makes every invitation handed out
+so far stop working, without disconnecting anybody. All invitations stop working when the
+session ends; each session also uses a new random certificate.
+
+**Streaming or sharing an invitation publicly?** Keep *Ask me before anyone joins* on, prefer
+viewer invitations, turn on single-use invitations, and revoke them when you are done.
 
 ## Join a session (guest)
 
@@ -166,6 +177,12 @@ OpenCollab mirror, so it can never overwrite your own data.
 * **Roles** (host only, ⋯ icon or right-click on a participant): *Make Editor*, *Make Viewer*, *Remove from
   Session*. Viewers' editors are read-only, and the host rejects any edit or file change from a
   viewer even if a modified client sends one.
+* **Permissions** (host only, same menu): besides editing, each guest can be allowed or denied to
+  *run configurations and builds*, *terminal commands*, *breakpoints* and the *chat* (a muted guest
+  still reads it). Editors start with all of them, viewers only with the chat, and viewers can
+  never get more than the chat. Changing a role resets permissions to that role's defaults. The
+  host checks them on every request, and a request still waiting is refused when its permission
+  is taken away.
 * **Leaving:** guests click **Leave**; the host clicks **End Session**, which disconnects
   everybody. Closing the project also ends its session.
 * **Network interruptions:** guests reconnect automatically (with backoff) and recover their

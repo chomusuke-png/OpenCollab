@@ -34,7 +34,7 @@ open class TwoIdeInstancesTest : HeavyPlatformTestCase() {
         Files.writeString(root.resolve("src/Shared.kt"), "// shared\n")
         LocalFileSystem.getInstance().refreshAndFindFileByNioFile(root)!!.refresh(false, true)
         OpenCollabSettings.getInstance().state.apply {
-            enableDirect = true; enableRelay = false; bindAddress = "127.0.0.1"; port = 0; advertisedHosts = ""; displayName = "HostIDE"
+            enableDirect = true; enableRelay = false; bindAddress = "127.0.0.1"; port = 0; advertisedHosts = ""; displayName = "HostIDE"; approveJoins = false
         }
         val service = CollabSessionService.getInstance(project)
         service.startHosting()

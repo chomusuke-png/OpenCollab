@@ -20,6 +20,7 @@ import dev.opencollab.core.protocol.Message
 import dev.opencollab.core.protocol.MessageCodec
 import dev.opencollab.core.protocol.PROTOCOL_VERSION
 import dev.opencollab.core.protocol.ParticipantInfo
+import dev.opencollab.core.protocol.Permission
 import dev.opencollab.core.protocol.ProtocolException
 import dev.opencollab.core.protocol.Role
 import dev.opencollab.core.transport.Connection
@@ -49,7 +50,19 @@ interface HostSessionListener {
 
     /** An editor adds or removes a line breakpoint in a shared file (session thread). */
     fun onBreakpointRequest(participantId: String, path: String, line: Int, add: Boolean) {}
+
+    /**
+     * Someone with a valid invitation wants to join and [HostConfig.approveJoins] is on (session
+     * thread). Answer with [HostSession.answerJoin]; they wait until then (or the timeout).
+     */
+    fun onJoinRequest(request: JoinRequestInfo) {}
+
+    /** A join request was answered, expired or withdrawn (the person left): hide its prompt. */
+    fun onJoinRequestClosed(requestId: String) {}
 }
+
+/** A person waiting to be let in. [address] is where they connect from (for the host to judge). */
+data class JoinRequestInfo(val requestId: String, val displayName: String, val role: Role, val address: String)
 
 /** Either a run [target] or a shell [command] (exactly one is set). */
 data class RunRequestInfo(
@@ -71,6 +84,8 @@ object RunRefusal {
     const val TOO_MANY = "too-many"
     const val NO_ANSWER = "no-answer"
     const val HOST = "host"
+    /** The host has not given this participant the permission for it. */
+    const val NOT_ALLOWED = "not-allowed"
 }
 
 data class HostConfig(
@@ -104,6 +119,14 @@ data class HostConfig(
     val maxTransfersPerParticipant: Int = 4,
     /** File requests of one participant waiting for a transfer slot; beyond that they fail. */
     val maxQueuedTransfersPerParticipant: Int = 256,
+    /** Newcomers wait until the host's user accepts them ([HostSessionListener.onJoinRequest]). */
+    val approveJoins: Boolean = false,
+    /** A join request the host has not answered by then is refused. */
+    val joinApprovalTimeoutMillis: Long = 120_000,
+    /** People waiting for approval at once; more are refused (a leaked invitation cannot flood the host). */
+    val maxPendingJoins: Int = 5,
+    /** Lifetime of the session's initial [editorToken] and [viewerToken]; 0 = until the session ends. */
+    val inviteTtlMillis: Long = 0,
     /** Optional [Features] this host offers (announced in Welcome, used only with guests announcing them too). */
     val features: Set<String> = Features.ALL.toSet(),
 )
@@ -150,6 +173,8 @@ class HostSession(
         val typingLimiter = RateLimiter(TYPING_PER_SECOND, scheduler)
         val runLimiter = RateLimiter(config.runRequestsPerSecond, scheduler)
         var handshakeTimer: Cancellable? = null
+        /** Set while this newcomer waits for the host's user to accept them. */
+        var pendingJoin: PendingJoin? = null
         var open = true
         /** Latest position held back by the presence limit, and the timer that relays it. */
         var pendingPresence: Message.Presence? = null
@@ -168,6 +193,14 @@ class HostSession(
         }
     }
 
+    private class PendingJoin(val requestId: String, val hello: Message.Hello, val role: Role, val expiry: Cancellable)
+
+    /** What an invitation token grants; [usesLeft] null = unlimited. Mutated on the session thread only. */
+    private class InviteGrant(val role: Role, val expiresAt: Long?, var usesLeft: Int?)
+
+    /** Valid invitation tokens. Thread-safe so invitations can be created from any thread. */
+    private val grants = java.util.concurrent.ConcurrentHashMap<String, InviteGrant>()
+
     private data class Detached(val info: ParticipantInfo, val resumeKey: String, val subscriptions: Set<String>, val expiry: Cancellable)
 
     private val peers = LinkedHashMap<Connection, Peer>()
@@ -180,7 +213,7 @@ class HostSession(
     private val chatLog = ArrayDeque<ChatEntry>()
     private var nextChatId = 1L
     private var runTargets: List<RunTarget> = emptyList()
-    private inner class PendingRun(val peer: Peer, val expiry: Cancellable)
+    private inner class PendingRun(val peer: Peer, val expiry: Cancellable, val permission: String)
     /** Unanswered run requests by "participantId/requestId". */
     private val pendingRuns = HashMap<String, PendingRun>()
     private class ConsoleLog(val started: Message.ConsoleStarted) {
@@ -200,7 +233,40 @@ class HostSession(
     val endpointsInfo = mutableListOf<String>()
 
     init {
+        val expiresAt = config.inviteTtlMillis.takeIf { it > 0 }?.let { scheduler.nowMillis() + it }
+        grants[config.editorToken] = InviteGrant(Role.EDITOR, expiresAt, null)
+        grants[config.viewerToken] = InviteGrant(Role.VIEWER, expiresAt, null)
         schedulePingRound()
+    }
+
+    // ---- Invitations ---------------------------------------------------------------------
+
+    /**
+     * A new invitation token for [role] (never HOST): valid for [ttlMillis] (0 = until the session
+     * ends) and [maxUses] joins (0 = unlimited). Thread-safe.
+     */
+    fun createInvite(role: Role, ttlMillis: Long = 0, maxUses: Int = 0): String {
+        require(role != Role.HOST) { "Invitations cannot grant the host role" }
+        val token = randomToken()
+        grants[token] = InviteGrant(role, ttlMillis.takeIf { it > 0 }?.let { scheduler.nowMillis() + it }, maxUses.takeIf { it > 0 })
+        return token
+    }
+
+    /** Every invitation handed out so far stops working; people already in the session stay. Thread-safe. */
+    fun revokeInvites() = grants.clear()
+
+    /** The role [token] grants, using it up if limited; null if unknown, expired or used up (session thread). */
+    private fun redeem(token: String): Role? {
+        val now = scheduler.nowMillis()
+        grants.entries.removeIf { (_, grant) -> grant.expiresAt != null && now >= grant.expiresAt }
+        // Compare against every token in constant time each, so timing does not reveal a prefix.
+        var match: Map.Entry<String, InviteGrant>? = null
+        for (entry in grants.entries) if (constantTimeEquals(token, entry.key)) match = entry
+        val (key, grant) = match ?: return null
+        grant.usesLeft?.let { left ->
+            if (left <= 1) grants.remove(key) else grant.usesLeft = left - 1
+        }
+        return grant.role
     }
 
     // ---- Public API (thread-safe; work is posted to the session thread) --------------
@@ -219,6 +285,24 @@ class HostSession(
     }
 
     fun setRole(participantId: String, role: Role) = exec.execute { applyRole(participantId, role) }
+
+    /** Replaces a guest's [Permission]s (unknown ones are ignored). Thread-safe. */
+    fun setPermissions(participantId: String, permissions: Set<String>) = exec.execute { applyPermissions(participantId, permissions) }
+
+    /** The host's answer to a join request ([HostSessionListener.onJoinRequest]). Thread-safe. */
+    fun answerJoin(requestId: String, accepted: Boolean) = exec.execute {
+        val peer = peers.values.firstOrNull { it.pendingJoin?.requestId == requestId } ?: return@execute
+        val pending = peer.pendingJoin ?: return@execute
+        peer.pendingJoin = null
+        pending.expiry.cancel()
+        listener.onJoinRequestClosed(requestId)
+        if (accepted) {
+            admit(peer, pending.hello, pending.role, resumed = null)
+        } else {
+            listener.onLog("Did not let ${pending.hello.displayName} join")
+            reject(peer, "The host did not let you join")
+        }
+    }
 
     fun kick(participantId: String) = exec.execute {
         peers.values.firstOrNull { it.info?.id == participantId && it.role != Role.HOST }?.let {
@@ -278,7 +362,11 @@ class HostSession(
             return
         }
         if (peer.info == null) {
-            if (message is Message.Hello) handshake(peer, message) else drop(peer, "expected hello")
+            when {
+                peer.pendingJoin != null -> Unit // waiting for the host's answer: nothing to do yet
+                message is Message.Hello -> handshake(peer, message)
+                else -> drop(peer, "expected hello")
+            }
             return
         }
         try {
@@ -297,11 +385,13 @@ class HostSession(
             reject(peer, "Unsupported protocol version ${hello.protocolVersion} (host speaks $PROTOCOL_VERSION)")
             return
         }
+        // A participant resuming within the window keeps its place (and was accepted before),
+        // even if the invitation it came with has since been revoked or has expired.
+        val resumable = hello.resumeKey?.let { detached[it] }?.takeIf { it.info.role != Role.HOST }
         val tokenRole = when {
             constantTimeEquals(hello.token, config.hostToken) -> Role.HOST
-            constantTimeEquals(hello.token, config.editorToken) -> Role.EDITOR
-            constantTimeEquals(hello.token, config.viewerToken) -> Role.VIEWER
-            else -> null
+            resumable != null -> resumable.info.role
+            else -> redeem(hello.token)
         }
         if (tokenRole == null) {
             listener.onLog("Rejected connection from ${peer.connection.description}: invalid invite token")
@@ -312,13 +402,47 @@ class HostSession(
             reject(peer, "Host is already connected")
             return
         }
-        val active = peers.values.count { it.info != null }
-        if (active >= config.maxParticipants) {
+        if (!hasRoom()) {
             reject(peer, "Session is full")
             return
         }
+        if (resumable == null && tokenRole != Role.HOST && config.approveJoins) {
+            askToJoin(peer, hello, tokenRole)
+            return
+        }
+        val resumed = resumable?.let { detached.remove(it.resumeKey)?.also { d -> d.expiry.cancel() } }
+        admit(peer, hello, tokenRole, resumed)
+    }
 
-        val resumed = hello.resumeKey?.let { key -> detached.remove(key)?.also { it.expiry.cancel() } }
+    private fun hasRoom() = peers.values.count { it.info != null } < config.maxParticipants
+
+    /** Holds [peer] until the host's user answers (or the timeout refuses them). */
+    private fun askToJoin(peer: Peer, hello: Message.Hello, role: Role) {
+        if (peers.values.count { it.pendingJoin != null } >= config.maxPendingJoins) {
+            reject(peer, "Too many people are waiting to join; try again later")
+            return
+        }
+        val requestId = randomToken(9)
+        val expiry = scheduler.schedule(config.joinApprovalTimeoutMillis) {
+            exec.execute {
+                if (peer.pendingJoin?.requestId != requestId) return@execute
+                peer.pendingJoin = null
+                listener.onJoinRequestClosed(requestId)
+                reject(peer, "The host did not answer your request to join")
+            }
+        }
+        peer.pendingJoin = PendingJoin(requestId, hello, role, expiry)
+        if (Features.JOIN_APPROVAL in hello.features) peer.send(Message.JoinPending(config.joinApprovalTimeoutMillis))
+        listener.onLog("${hello.displayName} wants to join as $role")
+        listener.onJoinRequest(JoinRequestInfo(requestId, hello.displayName, role, peer.connection.description))
+    }
+
+    private fun admit(peer: Peer, hello: Message.Hello, tokenRole: Role, resumed: Detached?) {
+        if (!peer.open || closed) return
+        if (!hasRoom()) {
+            reject(peer, "Session is full")
+            return
+        }
         val info: ParticipantInfo
         if (resumed != null && resumed.info.role != Role.HOST) {
             // Keep the role the host assigned; a token can never escalate a resumed participant.
@@ -326,7 +450,7 @@ class HostSession(
             peer.resumeKey = resumed.resumeKey
             peer.subscriptions.addAll(resumed.subscriptions)
         } else {
-            info = ParticipantInfo(randomToken(9), hello.displayName, tokenRole, nextColor++ % 8)
+            info = ParticipantInfo(randomToken(9), hello.displayName, tokenRole, nextColor++ % 8, Permission.defaultsFor(tokenRole).sorted())
             peer.resumeKey = randomToken(24)
         }
         peer.info = info
@@ -374,6 +498,10 @@ class HostSession(
                 requireRole(peer, Role.HOST)
                 applyRole(m.participantId, m.role)
             }
+            is Message.SetPermissions -> {
+                requireRole(peer, Role.HOST)
+                applyPermissions(m.participantId, m.permissions.toSet())
+            }
             is Message.RequestManifest -> {
                 val seq = fileSeq
                 io.execute {
@@ -396,7 +524,7 @@ class HostSession(
             }
             is Message.Presence -> presence(peer, m)
             is Message.ChatSend -> chat(peer, m)
-            is Message.ChatTyping -> if (peer.typingLimiter.tryAcquire()) broadcast(Message.ChatTypingBroadcast(peer.id, m.typing), except = peer)
+            is Message.ChatTyping -> if (peer.may(Permission.CHAT) && peer.typingLimiter.tryAcquire()) broadcast(Message.ChatTypingBroadcast(peer.id, m.typing), except = peer)
             is Message.RunRequest -> runRequest(peer, m)
             is Message.CommandRequest -> commandRequest(peer, m)
             is Message.BreakpointRequest -> breakpointRequest(peer, m)
@@ -419,12 +547,41 @@ class HostSession(
         val peer = peers.values.firstOrNull { it.info?.id == participantId } ?: return
         val info = peer.info ?: return
         if (info.role == Role.HOST || info.role == role) return
-        peer.info = info.copy(role = role)
+        val updated = info.copy(role = role, permissions = Permission.defaultsFor(role).sorted())
+        peer.info = updated
         if (!role.canEdit) refusePendingRuns(peer, RunRefusal.VIEWER)
         broadcast(Message.RoleChanged(participantId, role))
+        broadcastPermissions(updated)
         listener.onLog("${info.displayName} is now $role")
         listener.onParticipantsChanged(participants())
     }
+
+    private fun applyPermissions(participantId: String, permissions: Set<String>) {
+        val peer = peers.values.firstOrNull { it.info?.id == participantId } ?: return
+        val info = peer.info ?: return
+        if (info.role == Role.HOST) return
+        val granted = permissions.filter { it in Permission.ALL }.toSortedSet()
+        // Viewers never get more than chat: running or debugging would let them change the project.
+        if (!info.role.canEdit) granted.retainAll(setOf(Permission.CHAT))
+        if (granted == info.effectivePermissions) return
+        val updated = info.copy(permissions = granted.toList())
+        peer.info = updated
+        if (Permission.RUN !in granted || Permission.COMMANDS !in granted) refusePendingRuns(peer, RunRefusal.NOT_ALLOWED)
+        broadcastPermissions(updated)
+        listener.onLog("${info.displayName} may now: ${granted.joinToString().ifEmpty { "-" }}")
+        listener.onParticipantsChanged(participants())
+    }
+
+    /** To participants that understand permissions (others still see them in the participant list). */
+    private fun broadcastPermissions(info: ParticipantInfo) {
+        val m = Message.PermissionsChanged(info.id, info.effectivePermissions.sorted())
+        for (other in peers.values) {
+            if (other.info == null || !other.open || Features.PERMISSIONS !in other.features) continue
+            other.send(m)
+        }
+    }
+
+    private fun Peer.may(permission: String): Boolean = info?.may(permission) == true
 
     // ---- Files -------------------------------------------------------------------------
 
@@ -748,6 +905,10 @@ class HostSession(
     /** Every participant may chat (viewers too). The host, not the sender, sets who and when. */
     private fun chat(peer: Peer, m: Message.ChatSend) {
         val info = peer.info ?: return
+        if (!info.may(Permission.CHAT)) {
+            peer.send(Message.Error("chat-muted", "The host has muted you in the chat"))
+            return
+        }
         if (!peer.chatLimiter.tryAcquire()) {
             peer.send(Message.Error("chat-rate", "Too many chat messages; slow down"))
             return
@@ -873,7 +1034,7 @@ class HostSession(
     // ---- Run requests (guest → host) -------------------------------------------------
 
     private fun runRequest(peer: Peer, m: Message.RunRequest) {
-        val refusal = runRefusal(peer)
+        val refusal = runRefusal(peer, Permission.RUN)
         if (refusal != null) return peer.send(Message.RunResponse(m.requestId, false, refusal))
         val target = runTargets.firstOrNull { it.id == m.targetId }
             ?: return peer.send(Message.RunResponse(m.requestId, false, RunRefusal.UNKNOWN_TARGET))
@@ -882,16 +1043,17 @@ class HostSession(
 
     /** A shell command; like a run request, it runs only once the host's user allows this one. */
     private fun commandRequest(peer: Peer, m: Message.CommandRequest) {
-        val refusal = if (Features.COMMANDS !in peer.features) RunRefusal.UNKNOWN_TARGET else runRefusal(peer)
+        val refusal = if (Features.COMMANDS !in peer.features) RunRefusal.UNKNOWN_TARGET else runRefusal(peer, Permission.COMMANDS)
         if (refusal != null) return peer.send(Message.RunResponse(m.requestId, false, refusal))
         awaitAnswer(peer, m.requestId, null, m.command)
     }
 
-    private fun runRefusal(peer: Peer): String? {
+    private fun runRefusal(peer: Peer, permission: String): String? {
         val info = peer.info ?: return RunRefusal.REFUSED
         return when {
             info.role == Role.HOST -> RunRefusal.HOST
             !info.role.canEdit -> RunRefusal.VIEWER
+            !info.may(permission) -> RunRefusal.NOT_ALLOWED
             !peer.runLimiter.tryAcquire() -> RunRefusal.TOO_MANY
             else -> null
         }
@@ -904,12 +1066,13 @@ class HostSession(
         val expiry = scheduler.schedule(config.runRequestTimeoutMillis) {
             exec.execute { if (pendingRuns.remove(key) != null) peer.send(Message.RunResponse(requestId, false, RunRefusal.NO_ANSWER)) }
         }
-        pendingRuns[key] = PendingRun(peer, expiry)
+        pendingRuns[key] = PendingRun(peer, expiry, if (command != null) Permission.COMMANDS else Permission.RUN)
         listener.onRunRequest(RunRequestInfo(requestId, info.id, info.displayName, target, command))
     }
 
     private fun breakpointRequest(peer: Peer, m: Message.BreakpointRequest) {
         requireEditor(peer)
+        if (!peer.may(Permission.DEBUG)) throw SecurityException("The host has not allowed you to change breakpoints")
         if (Features.DEBUG !in peer.features) return
         if (!files.rules.isShared(m.path)) throw SecurityException("Not a shared file: ${m.path}")
         listener.onBreakpointRequest(peer.id, m.path, m.line, m.add)
@@ -929,12 +1092,14 @@ class HostSession(
             pending.expiry.cancel()
             val peer = pending.peer
             if (!peer.open) { result.complete(false); return@execute }
-            // The role may have changed since the request: only a current editor gets it run.
-            val granted = accepted && peer.role.canEdit && peer.role != Role.HOST
+            // The role or permissions may have changed since the request: check them again.
+            val allowed = peer.role.canEdit && peer.role != Role.HOST && peer.may(pending.permission)
+            val granted = accepted && allowed
             val reason = when {
                 granted -> null
-                accepted -> RunRefusal.VIEWER
-                else -> RunRefusal.REFUSED
+                !accepted -> RunRefusal.REFUSED
+                !peer.role.canEdit -> RunRefusal.VIEWER
+                else -> RunRefusal.NOT_ALLOWED
             }
             peer.send(Message.RunResponse(requestId, granted, reason))
             result.complete(granted || !accepted) // a refusal always goes through
@@ -992,6 +1157,11 @@ class HostSession(
         if (!peer.open) return
         peer.open = false
         peer.handshakeTimer?.cancel()
+        peer.pendingJoin?.let {
+            peer.pendingJoin = null
+            it.expiry.cancel()
+            listener.onJoinRequestClosed(it.requestId) // they gave up waiting
+        }
         peer.presenceFlush?.cancel()
         peer.transfers.values.forEach { it.cancel() }
         peer.queuedTransfers.clear()

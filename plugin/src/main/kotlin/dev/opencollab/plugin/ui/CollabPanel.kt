@@ -30,6 +30,7 @@ import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import dev.opencollab.core.protocol.ParticipantInfo
+import dev.opencollab.core.protocol.Permission
 import dev.opencollab.core.protocol.Role
 import dev.opencollab.core.protocol.RunTargetKind
 import dev.opencollab.plugin.OpenCollabBundle.message
@@ -48,6 +49,7 @@ import javax.swing.DefaultListModel
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JList
+import javax.swing.JCheckBoxMenuItem
 import javax.swing.JMenuItem
 import javax.swing.JPanel
 import javax.swing.JPopupMenu
@@ -211,7 +213,7 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
     // ---- Invitations and connection details ---------------------------------------------
 
     private fun showRunTargets() {
-        val targets = service.runTargets
+        val targets = if (service.canRequestRuns) service.runTargets else emptyList()
         if (targets.isEmpty() && !service.canRequestCommands) return
         val menu = JPopupMenu()
         for (target in targets) {
@@ -245,6 +247,13 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         menu.add(JMenuItem(message("panel.invite.viewer"), AllIcons.Actions.Show).apply {
             addActionListener { copyInvite(hosting.viewerInvite, message("panel.invite.copied.viewer")) }
         })
+        menu.addSeparator()
+        menu.add(JMenuItem(message("panel.invite.revoke"), AllIcons.Actions.Cancel).apply {
+            addActionListener {
+                service.revokeInvites()
+                CollabUi.toast(inviteButton, message("panel.invite.revoked"))
+            }
+        })
         menu.show(inviteButton, 0, inviteButton.height)
     }
 
@@ -273,6 +282,14 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         val items = mutableListOf<JMenuItem>()
         if (p.role != Role.EDITOR) items += JMenuItem(message("panel.make.editor")).apply { addActionListener { service.setRole(p.id, Role.EDITOR) } }
         if (p.role != Role.VIEWER) items += JMenuItem(message("panel.make.viewer")).apply { addActionListener { service.setRole(p.id, Role.VIEWER) } }
+        // What this guest may do besides editing; viewers can at most chat.
+        val current = p.effectivePermissions
+        val offered = if (p.role.canEdit) Permission.ALL else listOf(Permission.CHAT)
+        for (permission in offered) {
+            items += JCheckBoxMenuItem(message("panel.permission", permissionName(permission)), permission in current).apply {
+                addActionListener { service.setPermissions(p.id, if (isSelected) current + permission else current - permission) }
+            }
+        }
         items += JMenuItem(message("panel.remove")).apply { addActionListener { service.kick(p.id) } }
         return items
     }
@@ -380,7 +397,7 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         inviteButton.isVisible = hosting != null
         val guestEditor = mode is Mode.Joined && service.myRole?.canEdit == true
         runOnHostButton.isVisible = mode is Mode.Joined
-        runOnHostButton.isEnabled = guestEditor && (service.runTargets.isNotEmpty() || service.canRequestCommands)
+        runOnHostButton.isEnabled = guestEditor && ((service.canRequestRuns && service.runTargets.isNotEmpty()) || service.canRequestCommands)
         hostPanel.refresh()
         runOnHostButton.toolTipText = if (mode is Mode.Joined && !guestEditor) message("console.viewer") else null
         leaveButton.isEnabled = mode is Mode.Hosting || mode is Mode.Joined

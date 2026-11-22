@@ -96,6 +96,7 @@ class PluginIntegrationTest : HeavyPlatformTestCase() {
     private fun configureDirectOnLoopback() {
         OpenCollabSettings.getInstance().state.apply {
             enableDirect = true
+            approveJoins = false // guests here join without a prompt (approval is covered by core tests)
             enableRelay = false
             bindAddress = "127.0.0.1"
             port = 0

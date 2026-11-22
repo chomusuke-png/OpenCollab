@@ -32,6 +32,10 @@ class FakeIde(name: String) : ClientHandler {
     val filesChanged = CopyOnWriteArrayList<String>()
     @Volatile var latencies: Map<String, Int> = emptyMap()
     @Volatile var welcome: Message.Welcome? = null
+    @Volatile var joinPending: Long? = null
+    override fun onJoinPending(timeoutMillis: Long) { joinPending = timeoutMillis }
+    val permissionUpdates = CopyOnWriteArrayList<Set<String>>()
+    override fun onPermissionsChanged(permissions: Set<String>) { permissionUpdates += permissions }
     lateinit var client: CollabClient
 
     override fun onWelcome(welcome: Message.Welcome) { this.welcome = welcome }
@@ -103,6 +107,9 @@ class Harness(val hostRoot: Path, rules: SharingRules = SharingRules(), config: 
     val runRequests = CopyOnWriteArrayList<RunRequestInfo>()
     /** Breakpoint requests: participant id, path, line, add. */
     val breakpointRequests = CopyOnWriteArrayList<List<Any>>()
+    /** People waiting to be let in, and the requests closed (answered, expired, withdrawn). */
+    val joinRequests = CopyOnWriteArrayList<JoinRequestInfo>()
+    val closedJoinRequests = CopyOnWriteArrayList<String>()
     private val clients = CopyOnWriteArrayList<CollabClient>()
 
     /** Host documents: unsaved editor text wins over disk; pre-registered with the host bridge. */
@@ -124,6 +131,8 @@ class Harness(val hostRoot: Path, rules: SharingRules = SharingRules(), config: 
         scheduler,
         object : HostSessionListener {
             override fun onRunRequest(request: RunRequestInfo) { runRequests += request }
+            override fun onJoinRequest(request: JoinRequestInfo) { joinRequests += request }
+            override fun onJoinRequestClosed(requestId: String) { closedJoinRequests += requestId }
             override fun onBreakpointRequest(participantId: String, path: String, line: Int, add: Boolean) {
                 breakpointRequests += listOf(participantId, path, line, add)
             }

@@ -138,8 +138,9 @@ class ChatPanel(private val service: CollabSessionService) : JPanel(BorderLayout
 
     /** Brings the panel up to date with the session's chat. EDT. */
     fun refresh(inSession: Boolean) {
-        input.isEnabled = inSession
-        send.isEnabled = inSession
+        // The host may mute a participant in the chat: they still read it.
+        input.isEnabled = inSession && service.canChat
+        send.isEnabled = inSession && service.canChat
         updateTypingLabel()
         input.emptyText.text = message(if (inSession) "chat.placeholder" else "chat.not.in.session")
         if (!inSession) showHint(null)

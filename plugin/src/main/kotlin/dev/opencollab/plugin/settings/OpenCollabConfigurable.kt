@@ -79,6 +79,18 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
                     checkBox(message("settings.allow.commands")).bindSelected(s::allowCommandRequests)
                         .comment(message("settings.allow.commands.comment"))
                 }
+                row {
+                    checkBox(message("settings.approve.joins")).bindSelected(s::approveJoins)
+                        .comment(message("settings.approve.joins.comment"))
+                }
+                row(message("settings.invite.expiry")) {
+                    intTextField(0..MAX_INVITE_MINUTES).bindIntText(s::inviteExpiryMinutes)
+                        .comment(message("settings.invite.expiry.comment"))
+                }
+                row {
+                    checkBox(message("settings.invite.single")).bindSelected(s::singleUseInvites)
+                        .comment(message("settings.invite.single.comment"))
+                }
             }
 
             group(message("settings.group.sharing")) {
@@ -166,15 +178,46 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
         }
     }
 
+    /**
+     * The relay secret as stored in the IDE password safe; null until loaded. The password safe can
+     * be slow (it may ask the operating system's keychain), so it is never read or written on the
+     * UI thread: it is loaded once in the background and the field stays disabled until then.
+     */
+    @Volatile private var storedSecret: String? = null
+
     override fun reset() {
         super.reset()
-        secretField.text = settings.relaySecret
+        val known = storedSecret
+        if (known != null) {
+            secretField.text = known
+            return
+        }
+        secretField.isEnabled = false
+        val modality = ModalityState.stateForComponent(secretField)
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val secret = settings.relaySecret
+            ApplicationManager.getApplication().invokeLater({
+                storedSecret = secret
+                secretField.text = secret
+                secretField.isEnabled = true
+            }, modality)
+        }
     }
 
-    override fun isModified(): Boolean = super.isModified() || String(secretField.password) != settings.relaySecret
+    override fun isModified(): Boolean {
+        val known = storedSecret ?: return super.isModified() // not loaded yet: the field is untouched
+        return super.isModified() || String(secretField.password) != known
+    }
 
     override fun apply() {
         super.apply()
-        settings.relaySecret = String(secretField.password)
+        val known = storedSecret ?: return
+        val secret = String(secretField.password)
+        if (secret == known) return
+        storedSecret = secret
+        ApplicationManager.getApplication().executeOnPooledThread { settings.relaySecret = secret }
     }
 }
+
+/** Longest invitation lifetime offered in the settings: one week. */
+private const val MAX_INVITE_MINUTES = 7 * 24 * 60

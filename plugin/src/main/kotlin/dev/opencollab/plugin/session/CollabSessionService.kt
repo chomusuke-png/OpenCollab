@@ -31,6 +31,11 @@ import java.util.concurrent.ConcurrentHashMap
 import dev.opencollab.core.protocol.FileMutation
 import dev.opencollab.core.protocol.ParticipantInfo
 import dev.opencollab.core.protocol.Role
+import dev.opencollab.core.protocol.Permission
+import dev.opencollab.core.session.JoinRequestInfo
+import dev.opencollab.plugin.ui.permissionName
+import com.intellij.notification.Notification
+import com.intellij.notification.NotificationAction
 import dev.opencollab.core.session.ClientState
 import dev.opencollab.core.session.CollabClient
 import dev.opencollab.core.session.DocumentSource
@@ -72,14 +77,19 @@ class CollabSessionService(private val project: Project) : Disposable {
             val session: HostSession,
             val transports: List<HostTransport>,
             val bridge: IdeBridge,
-            val editorInvite: String,
-            val viewerInvite: String,
+            /** A new invitation (its own token, with the expiry and use limit of the settings). */
+            private val makeInvite: (Role) -> String,
             val endpoints: List<String>,
             val fingerprint: String,
             val consoles: HostConsoleSharing,
             /** The debugger, breakpoints, VCS status and code style shown to guests; null when not shared. */
             val ide: HostIdeSharing?,
         ) : Mode
+        {
+            /** Each read creates a new invitation; invitations can be revoked all at once. */
+            val editorInvite: String get() = makeInvite(Role.EDITOR)
+            val viewerInvite: String get() = makeInvite(Role.VIEWER)
+        }
         class Joined(val client: CollabClient, val bridge: IdeBridge, val project: String) : Mode
     }
 
@@ -152,7 +162,15 @@ class CollabSessionService(private val project: Project) : Disposable {
 
     /** Guest: whether the host accepts command requests from us (an editor, host supports it). */
     val canRequestCommands: Boolean
-        get() = (mode as? Mode.Joined)?.client?.let { Features.COMMANDS in it.sharedFeatures && it.role.canEdit } ?: false
+        get() = (mode as? Mode.Joined)?.client?.let { Features.COMMANDS in it.sharedFeatures && it.role.canEdit && it.may(Permission.COMMANDS) } ?: false
+
+    /** Guest: may ask the host to run its configurations or build. */
+    val canRequestRuns: Boolean
+        get() = (mode as? Mode.Joined)?.client?.let { it.role.canEdit && it.may(Permission.RUN) } ?: false
+
+    /** Guest: may write in the chat. */
+    val canChat: Boolean
+        get() = (mode as? Mode.Joined)?.client?.may(Permission.CHAT) ?: true
 
     /** Guest: asks the host to run [command] in a shell in its project folder; the host's user decides. */
     fun requestCommand(command: String): Boolean {
@@ -399,6 +417,16 @@ class CollabSessionService(private val project: Project) : Disposable {
             myRole = role
             appendLog(message("log.role.now", roleName(role)))
         }
+        override fun onJoinPending(timeoutMillis: Long) {
+            status = message("status.waiting.approval")
+            appendLog(message("log.waiting.approval", timeoutMillis / 1000))
+            fire()
+        }
+        override fun onPermissionsChanged(permissions: Set<String>) {
+            val names = Permission.ALL.filter { it in permissions }.joinToString { permissionName(it) }
+            appendLog(message("log.permissions.now", names.ifEmpty { message("permission.none") }))
+            fire()
+        }
         override fun onLog(message: String) = appendLog(message)
     }
 
@@ -440,8 +468,11 @@ class CollabSessionService(private val project: Project) : Disposable {
             if (s.shareConsoles) add(Features.TESTS)
             if (s.shareIdeState) addAll(listOf(Features.DEBUG, Features.VCS, Features.CODE_STYLE))
             if (s.allowCommandRequests) add(Features.COMMANDS)
+            add(Features.JOIN_APPROVAL)
+            add(Features.PERMISSIONS)
         }
-        val config = HostConfig(projectName = project.name, features = features)
+        val inviteTtl = s.inviteExpiryMinutes.coerceAtLeast(0).toLong() * 60_000
+        val config = HostConfig(projectName = project.name, features = features, approveJoins = s.approveJoins, inviteTtlMillis = inviteTtl)
         val bridge = IdeBridge(project, root, isHost = true, listener = bridgeListener())
 
         val files = object : ProjectFiles(root, rules, bridge.writer) {
@@ -471,6 +502,10 @@ class CollabSessionService(private val project: Project) : Disposable {
             override fun onBreakpointRequest(participantId: String, path: String, line: Int, add: Boolean) {
                 val who = participants.firstOrNull { it.id == participantId }?.displayName ?: "?"
                 ideSharing?.onBreakpointRequest(who, path, line, add)
+            }
+            override fun onJoinRequest(request: JoinRequestInfo) = askToLetIn(request)
+            override fun onJoinRequestClosed(requestId: String) {
+                joinPrompts.remove(requestId)?.let { ApplicationManager.getApplication().invokeLater({ it.expire() }, ModalityState.any()) }
             }
         })
 
@@ -537,8 +572,7 @@ class CollabSessionService(private val project: Project) : Disposable {
 
         val hosting = Mode.Hosting(
             session, transports, bridge,
-            editorInvite = invite(Role.EDITOR, config.editorToken),
-            viewerInvite = invite(Role.VIEWER, config.viewerToken),
+            makeInvite = { role -> invite(role, session.createInvite(role, inviteTtl, maxUses = if (s.singleUseInvites) 1 else 0)) },
             endpoints = endpoints + listOfNotNull(room?.let { "relay $relayUrl (room ${it.take(6)}…)" }),
             fingerprint = identity.fingerprint,
             consoles = HostConsoleSharing(project, root, session, s.shareConsoles) { appendLog(it) }.also { consoleSharing = it },
@@ -666,6 +700,41 @@ class CollabSessionService(private val project: Project) : Disposable {
 
     fun setRole(participantId: String, role: Role) {
         (mode as? Mode.Hosting)?.session?.setRole(participantId, role)
+    }
+
+    /** Host: replaces what a guest may do ([Permission]). */
+    fun setPermissions(participantId: String, permissions: Set<String>) {
+        (mode as? Mode.Hosting)?.session?.setPermissions(participantId, permissions)
+    }
+
+    /** Host: every invitation handed out so far stops working; people in the session stay. */
+    fun revokeInvites() {
+        val hosting = mode as? Mode.Hosting ?: return
+        hosting.session.revokeInvites()
+        appendLog(message("log.invites.revoked"))
+    }
+
+    /** Open "let in?" prompts by join request id. */
+    private val joinPrompts = ConcurrentHashMap<String, Notification>()
+
+    /** Session thread: someone with a valid invitation waits to be let in. */
+    private fun askToLetIn(request: JoinRequestInfo) {
+        ApplicationManager.getApplication().invokeLater({
+            val hosting = mode as? Mode.Hosting ?: return@invokeLater
+            val text = message("join.request", StringUtil.escapeXmlEntities(request.displayName), roleName(request.role), StringUtil.escapeXmlEntities(request.address))
+            val notification = NotificationGroupManager.getInstance().getNotificationGroup("OpenCollab")
+                .createNotification(message("join.request.title"), text, NotificationType.WARNING)
+            notification.addAction(NotificationAction.createSimpleExpiring(message("join.request.accept")) {
+                joinPrompts.remove(request.requestId)
+                hosting.session.answerJoin(request.requestId, accepted = true)
+            })
+            notification.addAction(NotificationAction.createSimpleExpiring(message("join.request.reject")) {
+                joinPrompts.remove(request.requestId)
+                hosting.session.answerJoin(request.requestId, accepted = false)
+            })
+            joinPrompts[request.requestId] = notification
+            notification.notify(project)
+        }, ModalityState.any())
     }
 
     fun kick(participantId: String) {

@@ -27,6 +27,9 @@ import javax.swing.JComponent
 /** Localized role name ("editor" / "editor", "viewer" / "lector", …). */
 fun roleName(role: Role): String = message("role.${role.name}")
 
+/** Localized name of a [dev.opencollab.core.protocol.Permission]. */
+fun permissionName(permission: String): String = message("permission.$permission")
+
 class CollabToolWindowFactory : ToolWindowFactory, DumbAware {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val panel = CollabPanel(project, toolWindow.disposable)

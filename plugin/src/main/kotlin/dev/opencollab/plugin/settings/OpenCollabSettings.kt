@@ -50,6 +50,12 @@ class OpenCollabSettings : PersistentStateComponent<OpenCollabSettings.State> {
         var shareIdeState: Boolean = true
         /** While hosting, editors may ask to run terminal commands here (each one needs the host's approval). */
         var allowCommandRequests: Boolean = true
+        /** While hosting, ask before anyone with an invitation joins. */
+        var approveJoins: Boolean = true
+        /** Invitations stop working after this many minutes; 0 = when the session ends. */
+        var inviteExpiryMinutes: Int = 24 * 60
+        /** Each copied invitation lets only one person join. */
+        var singleUseInvites: Boolean = false
     }
 
     private var state = State()

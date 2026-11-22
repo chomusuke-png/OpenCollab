@@ -64,6 +64,10 @@ interface BridgeListener {
     fun onStateChanged(state: ClientState, detail: String) {}
     fun onParticipantsChanged(participants: List<ParticipantInfo>) {}
     fun onRoleChanged(role: Role) {}
+    /** Waiting for the host to let us in. */
+    fun onJoinPending(timeoutMillis: Long) {}
+    /** What the host allows us changed. */
+    fun onPermissionsChanged(permissions: Set<String>) {}
     fun onLog(message: String) {}
     /** The session has been running for [sessionAgeMillis] (sent by the host on every (re)connect). */
     fun onSessionAge(sessionAgeMillis: Long) {}
@@ -215,6 +219,10 @@ class IdeBridge(
         if (!isHost) edtExecutor.execute { setAllReadOnly(role == Role.VIEWER) }
         listener.onRoleChanged(role)
     }
+
+    override fun onJoinPending(timeoutMillis: Long) = listener.onJoinPending(timeoutMillis)
+
+    override fun onPermissionsChanged(permissions: Set<String>) = listener.onPermissionsChanged(permissions)
 
     override fun onLog(message: String) = listener.onLog(message)
 

@@ -42,6 +42,7 @@ debugger stopping) stays in the OpenCollab tool window, as a short message on it
 | Accept direct connections | The host listens for TLS WebSocket connections |
 | Listen address / Port | Default `0.0.0.0:47800`. Use `127.0.0.1` to test on one machine. Port `0` picks a free port |
 | Advertised hosts | Addresses written into invitations (e.g. a VPN IP or DNS name). Default: all local IPv4 addresses |
+| Automatically configure my router (UPnP / NAT-PMP) | Default off. While you host, ask the router to forward the listen port, see below |
 | Relay URL / fingerprint / host secret | See [RELAY_SERVER.md](RELAY_SERVER.md). The secret is stored in the IDE password safe |
 | Guests can only read build files | Default on: build scripts and tool configuration (`build.gradle`, `pom.xml`, `package.json`, `Makefile`, `Dockerfile`…) decide what runs on your computer, so editors cannot change them |
 | Hide passwords, tokens and keys from guests | Default on: what looks like a secret is replaced by dots in shared output and debugger values (a best effort) |
@@ -98,7 +99,34 @@ OpenCollab mirror, so it can never overwrite your own data.
 
 ### Inviting a remote participant (different network)
 
-* **Port forwarding (router):**
+* **Automatic port forwarding (optional, off by default):** in *Settings | Tools | OpenCollab |
+  Port Forwarding* enable *Automatically configure my router (UPnP / NAT-PMP)*. The plugin
+  explains what it does and asks you to confirm the first time.
+  * **What it does:** when you start hosting, OpenCollab asks your router to forward **one TCP
+    port**, the listen port, from the internet to this computer. It first tries **UPnP IGD**
+    (UPnP *Internet Gateway Device*, the most common), then **NAT-PMP** (Apple and some other
+    routers). PCP is not supported. The mapping is renewed while you host and **removed when the
+    session ends**, or right away when you turn the setting off.
+  * **What it means:** that port can be reached from the whole internet while you host. Only
+    people with an invitation can join (TLS with the certificate pinned by the invitation, plus
+    the invitation token and, by default, your approval), and nothing else on your computer is
+    exposed.
+  * **Checking it:** the OpenCollab tool window shows a *Router* line while you host, for example
+    *Router (UPnP): forwards internet port 47800 to this computer (port 47800)*. Only then do new
+    invitations contain `wss://<public address>:<port>`. The router accepting the mapping does not
+    prove the port is reachable: a firewall on this computer can still block it (Windows: allow
+    the IDE on *Private* networks).
+  * **When it does not work:** the *Router* line and a notice say why (no router answered, UPnP
+    turned off on the router, the port is used by another device, or carrier-grade NAT). Hosting
+    still starts: people on your network can join, and you can forward the port by hand (below)
+    or use the relay. If both automatic and manual forwarding are on, the manual settings are
+    used when the router cannot be configured.
+  * Many routers have UPnP / NAT-PMP turned off, or support it badly. It never works behind
+    carrier-grade NAT (CGNAT), where your router has no public address of its own: use the relay.
+  * *Public address* (for example a dynamic DNS name) and *External port* apply to automatic
+    forwarding too. Empty, the router's own internet address and the listen port are used: the
+    public IP service is not contacted.
+* **Port forwarding (router, by hand):**
   1. Pick a fixed *Port* in *Direct Connections* (e.g. `47800`; port forwarding cannot use `0`) and
      keep the listen address `0.0.0.0`.
   2. On your router, forward **TCP** of that port (or another external port) to this computer's

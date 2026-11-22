@@ -14,6 +14,14 @@ without its own section; the section becomes the release notes on GitHub and the
 
 ## [Unreleased]
 
+### Added
+- **Automatic port forwarding** (off by default): while you host, OpenCollab can ask your router
+  (UPnP or NAT-PMP) to forward the listen port, so people on the internet can join without
+  setting up the router. The *Router* line in the tool window shows what the router said; the
+  mapping is removed when the session ends. If the router cannot do it, hosting goes on and
+  manual forwarding or the relay still work. See the
+  [user guide](docs/USER_GUIDE.md#inviting-a-remote-participant-different-network).
+
 ## [3.8.0] - 2026-11-22
 
 ### Added

@@ -15,7 +15,7 @@
 | Module | Depends on | Contents |
 |---|---|---|
 | `core` | kotlinx-serialization | `ot` (TextOperation, ServerDocument, ClientDocument, TextDiff), `protocol` (messages, codec/validation), `files` (SafePath, SharingRules, ProjectFiles, MirrorWorkspace), `presence` (throttler, rate limiter), `session` (HostSession, CollabClient), `transport` (interfaces, in-memory) |
-| `transport` | core, Java-WebSocket, BouncyCastle | TLS identity & pinning, direct WSS server/client, relay host/guest transports, `TlsTunnel` (end-to-end TLS over the relay), `Invite` |
+| `transport` | core, Java-WebSocket, BouncyCastle | TLS identity & pinning, direct WSS server/client, relay host/guest transports, `TlsTunnel` (end-to-end TLS over the relay), `Invite`, `router` (UPnP IGD and NAT-PMP port mappings) |
 | `relay-server` | transport | `RelayServer`, CLI `RelayMain`, fat JAR via Shadow |
 | `plugin` | transport + IntelliJ Platform | Settings, tool window (`CollabPanel`, `ChatPanel`, `HostIdePanel`), actions, `CollabSessionService`, `IdeBridge`, `VfsTreeWriter`, `PresenceRenderer`; host side `HostConsoleSharing` (runs, builds, test events, run and command requests) and `HostIdeSharing` (debugger via `DebugSnapshot`, breakpoints, VCS status, code style); guest side `GuestRunMirror` (Run/Build windows, test trees) and `GuestIdeMirror` (execution point, breakpoints, code style) |
 
@@ -110,6 +110,29 @@ On Windows, if the checkout path is long, the sandbox IDEs cannot start their co
   and followed by one `VfsUtil.markDirtyAndRefresh`.
 * **Permissions** are enforced only in `HostSession` (plus read-only editors on viewers for UX).
 
+### Router port mapping
+
+Automatic port forwarding lives in `transport/.../router` and uses only the JDK (UDP sockets,
+`java.net.http`, the JDK's own XML parser), no new dependency.
+
+* `PortMapper` is one protocol talking to one router: `externalAddress()`, `map()`, `unmap()`.
+  `UpnpGateway` (found by `UpnpDiscovery`: SSDP search on each private IPv4 network, device
+  description, SOAP `GetExternalIPAddress`, `GetSpecificPortMappingEntry`, `AddPortMapping`,
+  `DeletePortMapping`) and `NatPmpGateway` (RFC 6886, UDP 5351) implement it.
+* `RouterPortMapping` is the lifecycle for one hosted session: discover the routers (UPnP first,
+  then NAT-PMP at the likely gateways), refuse when the router's internet address is not public,
+  map the listen port (another external port when it is taken, unless the user chose one), renew
+  at half the lease on a daemon thread, map again when this computer's address changes, and on
+  `close()` stop renewing and remove only its own mapping. It reports `Status` values, which the
+  plugin shows on the *Router* line and in the activity log.
+* `CollabSessionService` creates it after the direct transport is listening, adds the confirmed
+  endpoint to new invitations, closes it when hosting ends or fails, and `stopRouterMapping()`
+  when the setting is turned off. A failure never stops hosting; the manual forwarding settings
+  then apply as before.
+* **Adding a protocol** (for example PCP): implement `PortMapper`, validating every answer, and
+  return it from `RouterPortMapping.discoverRouters()` in order of preference; the lifecycle,
+  status messages and tests with a simulated router stay the same.
+
 ## Test suites
 
 | Suite | What it covers |
@@ -124,6 +147,8 @@ On Windows, if the checkout path is long, the sandbox IDEs cannot start their co
 | `core` `SecurityTest` | newcomers wait for the host's approval (let in, refused, timeout, leaving while waiting, at most N waiting, older guests); resuming skips approval even after revocation; single-use, expiring and revoked invitations; permissions taken away refuse waiting and new run requests, commands, breakpoints and chat; viewers never get more than chat; role changes reset permissions; people leaving and joining again (same installation or name) keep the role and permissions given to them, never more than their invitation |
 | `core` `AddressMaskTest` | IPv4/IPv6 addresses keep only their last part, host names keep their domain, loopback, certificate fingerprints and times are left alone |
 | `transport` `PortForwardingTest`, `NetworkHintsTest` | public endpoint construction and validation, public-IP answer parsing, endpoint ordering (own subnet → public → other networks), detection of addresses from other private networks |
+| `transport` `RouterPortMappingTest`, `UpnpTest`, `NatPmpTest` | with simulated routers (in-memory, a local HTTP server, a local UDP server): protocol order and fallback, mapping, cleanup, renewal and renewal failure, a new local address, duplicate and taken ports, external port differing from the listen port, stopping during discovery, carrier-grade NAT and private router addresses, refusals, malformed, truncated and lying answers, DTDs and foreign URLs in descriptions, SSDP answers pointing at other devices, mappings of other devices never removed |
+| `plugin` `RouterForwardingTest` | the setting is off by default and saved; off never asks the router; a mapped port is invited and removed when hosting ends or the setting is turned off; a failing or missing router does not stop hosting and manual forwarding still applies |
 | `plugin` `PortForwardingAndJoinTest` | plugin host with port forwarding advertises `wss://<public>:<port>` and a guest joins using only that endpoint; port 0 refused with forwarding; pending join completes when the new project opens; suggested folder avoids non-empty folders |
 | `plugin` `BundleTest` | English/Spanish key parity, placeholders, apostrophe rules, keys used in code exist, Spanish resolution |
 | `plugin` `CollabPanelTest` | the bottom tabs (chat, activity, host) stay in the tool window when leaving and joining again |
@@ -157,3 +182,8 @@ IDE side of the host's IDE state: Run/Build window mirroring, collecting test ev
 frames and variables, breakpoint mirroring, VCS status, code style and running approved
 commands (their messages and permissions *are* tested in `core`, and the guest test tree in
 `SharedTestTreeTest`).
+
+Automatic port forwarding is tested only against simulated routers. Not tested without real
+hardware: SSDP discovery on a real network, real UPnP and NAT-PMP routers (their quirks, lease
+handling and how they show mappings), reachability from the internet through a mapping, and
+networks with several interfaces or changing addresses.

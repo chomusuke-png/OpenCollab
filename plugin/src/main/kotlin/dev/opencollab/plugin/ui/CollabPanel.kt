@@ -1,6 +1,7 @@
 package dev.opencollab.plugin.ui
 
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.util.text.StringUtil
 import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionManager
@@ -114,6 +115,8 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
     }
     private val settingsButton = JButton(AllIcons.General.Settings).apply { toolTipText = message("panel.settings.tooltip") }
     private val endpoints = JBLabel().apply { foreground = UIUtil.getContextHelpForeground() }
+    /** Host: what the router says about automatic port forwarding. */
+    private val routerStatus = JBLabel().apply { foreground = UIUtil.getContextHelpForeground() }
 
     // ---- Host: people waiting to be let in (also offered as notifications, which can be missed)
     private val requestsTitle = JBLabel().apply { font = JBUI.Fonts.label().asBold(); border = JBUI.Borders.empty(4, 0, 2, 0) }
@@ -161,7 +164,7 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         }
         val header = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            add(row(status, fill = true)); add(row(sessionTime, fill = true)); add(row(buttons, fill = true)); add(row(detailsLink)); add(row(endpoints, fill = true))
+            add(row(status, fill = true)); add(row(sessionTime, fill = true)); add(row(routerStatus, fill = true)); add(row(buttons, fill = true)); add(row(detailsLink)); add(row(endpoints, fill = true))
             add(row(requestsPanel, fill = true))
         }
         list.cellRenderer = ParticipantRenderer()
@@ -439,6 +442,10 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         detailsLink.text = message("panel.connection.details") + if (detailsExpanded()) " ▾" else " ▸"
         endpoints.isVisible = hosting != null && detailsExpanded()
         endpoints.text = hosting?.let { shown(message("panel.endpoints", it.endpoints.joinToString(", "), it.fingerprint.take(29))) } ?: ""
+        val router = service.routerStatus.takeIf { inSession && mode !is Mode.Joined }
+        routerStatus.isVisible = router != null
+        routerStatus.text = router?.let { "<html>${StringUtil.escapeXmlEntities(shown(it))}</html>" } ?: ""
+        routerStatus.icon = if (router != null && service.routerProblem) AllIcons.General.Warning else null
         refreshJoinRequests(hosting != null)
 
         val selectedId = list.selectedValue?.id

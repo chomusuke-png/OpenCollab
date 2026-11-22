@@ -27,6 +27,10 @@ addresses, your user folder, the project path and participants' names hidden.
 | *Reconnecting in Ns* | The network dropped. The guest keeps editing locally and merges after reconnecting; if the host's history no longer covers the gap, the document is rebased on a snapshot |
 | Gradle: `Could not resolve idea:idea:2026.2.3` | First build needs internet access to `cache-redirector.jetbrains.com` / `www.jetbrains.com` |
 | Gradle on Windows: path too long errors | Clone/build in a short path (e.g. `C:\src\OpenCollab`) |
+| *Router: no router answered* | UPnP and NAT-PMP are off on the router or not supported. Turn on UPnP in the router's settings if you want it, or forward the port by hand, or use the relay |
+| *Router: its internet address is not public* | Carrier-grade NAT or a second router in front of yours: port forwarding cannot reach you. Use the relay or a VPN |
+| *Router: the port is already forwarded to something else* | Another device uses that external port. Leave *External port* at `0` so another port is chosen, or remove the old mapping on the router |
+| *Router: … forwards internet port …* but guests cannot connect | The router accepted the mapping, but the firewall on the host blocks the IDE (Windows: allow it on *Private* networks), or the router ignores its own UPnP mappings. Try manual forwarding |
 | *Port forwarding needs a fixed listen port* | Set *Port* in *Direct Connections* to the port you forwarded (e.g. 47800) instead of `0` |
 | *Could not detect the public address* | The public IP service is unreachable. Enter your public IP or dynamic DNS name in *Port Forwarding \| Public address* |
 | Guest: *The host public address … did not answer* | Port forwarding is not working: forward TCP (not only UDP) to the host's current LAN IP, allow the IDE in the host firewall, check the external port, and check for CGNAT (router WAN address in `100.64.0.0/10` or private): then use the relay or a VPN |

@@ -24,6 +24,11 @@ import com.intellij.ui.dsl.builder.selected
 import dev.opencollab.core.files.SharingRules
 import dev.opencollab.plugin.OpenCollabBundle.message
 import dev.opencollab.transport.PortForwarding
+import com.intellij.openapi.project.ProjectManager
+import com.intellij.openapi.ui.Messages
+import com.intellij.ui.layout.or
+import dev.opencollab.plugin.session.CollabSessionService
+import javax.swing.JComponent
 
 /** Settings | Tools | OpenCollab. */
 class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
@@ -160,7 +165,16 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
 
                 collapsibleGroup(message("settings.group.forwarding")) {
                     lateinit var forwardingEnabled: Cell<JBCheckBox>
+                    lateinit var automaticEnabled: Cell<JBCheckBox>
                     lateinit var publicField: Cell<AddressField>
+                    row {
+                        automaticEnabled = checkBox(message("settings.router.enable")).bindSelected(s::automaticPortForwarding)
+                            .comment(message("settings.router.enable.comment"), MAX_LINE_LENGTH_WORD_WRAP)
+                            .onChanged { box ->
+                                // Explained before it is first turned on: it opens a port to the internet.
+                                if (box.isSelected && !s.automaticPortForwarding && !confirmRouterForwarding(box)) box.isSelected = false
+                            }
+                    }
                     row {
                         forwardingEnabled = checkBox(message("settings.forwarding.enable")).bindSelected(s::portForwarding)
                             .comment(message("settings.forwarding.enable.comment"), MAX_LINE_LENGTH_WORD_WRAP)
@@ -170,15 +184,15 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
                             publicField = cell(addressField()).bindText(s::publicAddress).columns(COLUMNS_LARGE)
                                 .comment(message("settings.forwarding.public.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                             button(message("settings.forwarding.detect")) { detectPublicIp(publicField.component, s.publicIpService) }
-                        }.enabledIf(forwardingEnabled.selected)
+                        }.enabledIf(forwardingEnabled.selected.or(automaticEnabled.selected))
                         row(message("settings.forwarding.port")) {
                             portField(s::externalPort).comment(message("settings.forwarding.port.comment"), MAX_LINE_LENGTH_WORD_WRAP)
-                        }.enabledIf(forwardingEnabled.selected)
+                        }.enabledIf(forwardingEnabled.selected.or(automaticEnabled.selected))
                         row(message("settings.forwarding.service")) {
                             textField().bindText(s::publicIpService).columns(COLUMNS_LARGE).comment(message("settings.forwarding.service.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                         }.enabledIf(forwardingEnabled.selected)
                     }
-                }.apply { expanded = s.portForwarding }
+                }.apply { expanded = s.portForwarding || s.automaticPortForwarding }
 
                 collapsibleGroup(message("settings.group.relay")) {
                     lateinit var relayEnabled: Cell<JBCheckBox>
@@ -233,8 +247,17 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
         return super.isModified() || String(secretField.password) != known
     }
 
+    private fun confirmRouterForwarding(parent: JComponent): Boolean = Messages.showOkCancelDialog(
+        parent, message("settings.router.confirm"), message("settings.router.confirm.title"),
+        message("settings.router.confirm.ok"), Messages.getCancelButton(), Messages.getWarningIcon(),
+    ) == Messages.OK
+
     override fun apply() {
         super.apply()
+        // Turned off while hosting: the router mapping goes now, not when the session ends.
+        if (!settings.state.automaticPortForwarding) {
+            ProjectManager.getInstance().openProjects.forEach { CollabSessionService.getInstance(it).stopRouterMapping() }
+        }
         val known = storedSecret ?: return
         val secret = String(secretField.password)
         if (secret == known) return

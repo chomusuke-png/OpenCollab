@@ -39,11 +39,13 @@ object Diagnostics {
             appendLine()
             appendLine("Session: $mode")
             appendLine("Status: ${service.status}")
+            service.routerStatus?.let { appendLine("Router: $it") }
             if (participants.isNotEmpty()) appendLine("Participants: ${participants.size} ($roles)")
             service.latencies.values.takeIf { it.isNotEmpty() }?.let { appendLine("Round trips (ms): ${it.sorted().joinToString()}") }
             appendLine()
             appendLine("Settings:")
             appendLine("  Direct: ${onOff(s.enableDirect)}, listen ${s.bindAddress.ifBlank { "-" }}:${s.port}, advertised ${s.advertisedHosts.ifBlank { "-" }}")
+            appendLine("  Automatic port forwarding (UPnP / NAT-PMP): ${onOff(s.automaticPortForwarding)}")
             appendLine("  Port forwarding: ${onOff(s.portForwarding)}, public ${s.publicAddress.ifBlank { "-" }}, external port ${s.externalPort}")
             appendLine("  Relay: ${onOff(s.enableRelay)}, ${s.relayUrl.ifBlank { "-" }}, fingerprint ${if (s.relayFingerprint.isBlank()) "not set" else "set"}")
             appendLine("  Join approval ${onOff(s.approveJoins)}, invitations expire after ${s.inviteExpiryMinutes} min, single use ${onOff(s.singleUseInvites)}")

@@ -96,6 +96,12 @@ tasks {
     test {
         systemProperty("idea.force.use.core.classloader", "true")
     }
+    // The plugin's version for its diagnostics (the IDE's own lookups are internal API).
+    processResources {
+        val version = project.version.toString()
+        inputs.property("version", version)
+        filesMatching("opencollab-build.properties") { expand("version" to version) }
+    }
 }
 
 // Releases live on GitHub. IDEs find updates through a custom plugin repository: the

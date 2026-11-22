@@ -508,7 +508,11 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
             override fun update(e: AnActionEvent) { e.presentation.isEnabled = logArea.document.length > 0 }
             override fun getActionUpdateThread() = ActionUpdateThread.EDT
         }
-        val toolbar = ActionManager.getInstance().createActionToolbar("OpenCollab.Activity", DefaultActionGroup(wrap, clear), true)
+        val diagnostics = object : DumbAwareAction(message("action.OpenCollab.CopyDiagnostics.text"), message("action.OpenCollab.CopyDiagnostics.description"), AllIcons.Actions.Copy) {
+            override fun actionPerformed(e: AnActionEvent) = dev.opencollab.plugin.session.Diagnostics.copy(project)
+            override fun getActionUpdateThread() = ActionUpdateThread.EDT
+        }
+        val toolbar = ActionManager.getInstance().createActionToolbar("OpenCollab.Activity", DefaultActionGroup(wrap, clear, diagnostics), true)
         toolbar.targetComponent = logArea
         return toolbar.component.apply { isOpaque = false; border = JBUI.Borders.empty() }
     }

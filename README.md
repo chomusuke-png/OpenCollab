@@ -24,6 +24,7 @@ other's cursors and selections, and navigate the project in their own IDE.
 | Document | Contents |
 |---|---|
 | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Install the ZIP, start a session, invite people, roles, sharing rules |
+| [docs/BETA_TESTING.md](docs/BETA_TESTING.md) | For testers: install, what to try, how to report bugs |
 | [docs/RELAY_SERVER.md](docs/RELAY_SERVER.md) | Deploy and configure the self-hosted relay (JAR, systemd or Docker) |
 | [docs/DEVELOPER.md](docs/DEVELOPER.md) | Build, test, run, architecture, module layout |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | Wire protocol and synchronisation algorithm |

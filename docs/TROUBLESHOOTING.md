@@ -3,6 +3,11 @@
 The **Activity** panel of the OpenCollab tool window shows what the session is doing. More detail
 is in the IDE log (*Help | Show Log in Explorer/Finder*), lines containing `OpenCollab`.
 
+To report a problem, open an [issue](https://github.com/chomusuke-png/OpenCollab/issues/new/choose)
+and paste the **diagnostics**: the copy icon in the *Activity* panel, or *Tools | OpenCollab |
+Copy Diagnostics*. They hold the versions, connection settings and recent activity, with
+addresses, your user folder, the project path and participants' names hidden.
+
 | Symptom | Cause and fix |
 |---|---|
 | *Could not start: Cannot listen on 0.0.0.0:47800* | The port is in use (another IDE hosting?). Change *Port* or use `0` for a free port |

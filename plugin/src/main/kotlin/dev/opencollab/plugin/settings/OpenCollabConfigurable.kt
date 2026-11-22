@@ -165,7 +165,7 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
                         row(message("settings.relay.url")) {
                             cell(addressField()).bindText(s::relayUrl).columns(COLUMNS_LARGE).comment("wss://relay.example.com:8443", MAX_LINE_LENGTH_WORD_WRAP)
                                 .validationOnApply {
-                                    if (relayEnabled.component.isSelected && !it.text.trim().startsWith("wss://")) error(message("settings.relay.url.invalid")) else null
+                                    if (relayEnabled.component.isSelected && !String(it.password).trim().startsWith("wss://")) error(message("settings.relay.url.invalid")) else null
                                 }
                         }.enabledIf(relayEnabled.selected)
                         row(message("settings.relay.fingerprint")) {

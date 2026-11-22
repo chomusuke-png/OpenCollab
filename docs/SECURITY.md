@@ -65,9 +65,20 @@ arbitrary filesystem access on the host; single commands run only after the host
 * **Editors are powerful.** See the trust assumptions above.
 * **Relay metadata.** The relay sees IP addresses, room ids, and the timing and size of traffic.
 * **Self-signed relays** require pinning the fingerprint; a relay started with `--self-signed`
-  changes its fingerprint on every start.
+  changes its fingerprint on every start unless it keeps its certificate (`--keep-certificate`,
+  the default in the Docker image).
 * **Direct mode exposure.** The host listens on all interfaces by default (TLS + token required).
   Use `127.0.0.1`, a VPN address, or the relay to restrict exposure.
 * **No end-to-end identity of participants.** Display names are self-declared.
 * **Shared `.idea` project files** (read-only for guests) are sent to guests; remove them with an
   exclude rule if they contain anything sensitive.
+
+## Reporting a security problem
+
+Please do not open a public issue for a security problem. Use GitHub's private reporting
+instead: on the repository page, *Security* tab, **Report a vulnerability**. Describe what an
+attacker can do and how; a proof of concept helps. You will get an answer within a week, and
+credit in the release notes if you want it.
+
+Diagnostics (*Tools | OpenCollab | Copy Diagnostics*) hide addresses and names but are meant for
+public bug reports; for a security report, send only what is needed.

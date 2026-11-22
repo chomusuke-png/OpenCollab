@@ -40,3 +40,9 @@ class CopyInviteAction : CollabAction() {
     }
     override fun update(e: AnActionEvent) { e.presentation.isEnabled = e.session()?.mode is CollabSessionService.Mode.Hosting }
 }
+
+/** Copies a report for a bug report: versions, connection kind and the recent log, with addresses and names hidden. */
+class CopyDiagnosticsAction : CollabAction() {
+    override fun actionPerformed(e: AnActionEvent) { e.project?.let(dev.opencollab.plugin.session.Diagnostics::copy) }
+    override fun update(e: AnActionEvent) { e.presentation.isEnabled = e.project != null }
+}

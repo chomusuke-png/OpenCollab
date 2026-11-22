@@ -1,0 +1,67 @@
+name: Bug report
+description: Something does not work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing OpenCollab! Please do not paste invitations, relay secrets or anything
+        from your project you want to keep private: this page is public.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what happened instead.
+      placeholder: |
+        1. The host shared the project over the relay
+        2. I joined as an editor and opened Main.kt
+        3. My edits did not reach the host; the status said "Reconnecting"
+    validations:
+      required: true
+  - type: dropdown
+    id: role
+    attributes:
+      label: Your role in the session
+      options:
+        - Host
+        - Editor (guest)
+        - Viewer (guest)
+        - Not in a session yet (hosting or joining failed)
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: How you were connected
+      options:
+        - Same network (direct)
+        - Port forwarding on the host's router
+        - Relay
+        - VPN (Tailscale, ZeroTier, ...)
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: How often
+      options:
+        - Every time
+        - Sometimes
+        - Once
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: |
+        In the OpenCollab tool window, Activity tab, click the copy icon (or Tools > OpenCollab >
+        Copy Diagnostics) and paste here. Addresses and names are hidden; read it before posting.
+        If you can, add the other person's diagnostics too.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Screenshots, the project size or language, other plugins that might be involved.

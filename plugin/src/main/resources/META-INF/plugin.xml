@@ -29,6 +29,8 @@
             <action id="OpenCollab.Join" class="dev.opencollab.plugin.actions.JoinSessionAction"/>
             <action id="OpenCollab.CopyInvite" class="dev.opencollab.plugin.actions.CopyInviteAction"/>
             <action id="OpenCollab.Leave" class="dev.opencollab.plugin.actions.LeaveSessionAction"/>
+            <separator/>
+            <action id="OpenCollab.CopyDiagnostics" class="dev.opencollab.plugin.actions.CopyDiagnosticsAction"/>
         </group>
     </actions>
 </idea-plugin>

@@ -14,6 +14,16 @@ without its own section; the section becomes the release notes on GitHub and the
 
 ## [Unreleased]
 
+### Added
+- **Build files are read-only for guests** by default: build scripts and tool configuration
+  (`build.gradle`, `pom.xml`, `package.json`, `Makefile`, `Dockerfile` and the like) decide what
+  runs on the host's computer. *Guests can only read build files* turns this off.
+- A guest's **request to run** something lists the files guests changed since the host last
+  allowed a run, build files first, so the host knows what will run.
+- **Passwords, tokens and keys are hidden** from guests in shared run and build output and in
+  debugger values (a best effort). *Show guests the values of debugger variables* can turn the
+  values off completely.
+
 ### Changed
 - The IDE's **Notifications** are only for people asking to join or to run something on the
   host. Chat no longer pops up there (unread messages are counted on the Chat tab and in the

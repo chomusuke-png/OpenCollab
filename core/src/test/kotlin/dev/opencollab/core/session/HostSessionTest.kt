@@ -160,6 +160,50 @@ class HostSessionTest {
     }
 
     @Test
+    fun `run requests list what guests changed since the host last allowed a run`() {
+        sampleProject()
+        Harness(host).use { h ->
+            val alice = h.guest("alice", guestDir("alice"))
+            awaitState(alice, ClientState.CONNECTED)
+            h.session.setRunTargets(listOf(RunTarget("build", "Build Project", RunTargetKind.BUILD)))
+            eventually { alice.runTargets.size == 1 }
+
+            alice.open("README.md", "# Demo\n")
+            alice.type("README.md", 0, "x")
+            eventually { h.session.documentText("README.md") == "x# Demo\n" }
+            alice.client.requestFileChange(FileMutation(FileOpKind.CREATE_FILE, "src/Extra.kt", contentBase64 = MessageCodec.encodeBase64("val x = 1".toByteArray())))
+            eventually { Files.exists(host.resolve("src/Extra.kt")) }
+
+            alice.client.requestRun("build")!!
+            eventually { h.runRequests.size == 1 }
+            val first = h.runRequests.single()
+            assertEquals(listOf(GuestChange("README.md", listOf("alice")), GuestChange("src/Extra.kt", listOf("alice"))), first.guestChanges)
+            assertTrue(h.session.answerRun(first.participantId, first.requestId, accepted = true).get(5, java.util.concurrent.TimeUnit.SECONDS))
+
+            Thread.sleep(1_100) // the rate limit allows one request per second
+            alice.client.requestRun("build")!!
+            eventually { h.runRequests.size == 2 }
+            assertTrue(h.runRequests[1].guestChanges.isEmpty(), "changes the host already allowed a run with are not listed again")
+        }
+    }
+
+    @Test
+    fun `build files are read-only for guests when the host protects them`() {
+        sampleProject()
+        write(host, "build.gradle.kts", "plugins {}\n")
+        val rules = SharingRules(guestReadOnly = SharingRules.DEFAULT_GUEST_READ_ONLY + SharingRules.BUILD_FILES)
+        Harness(host, rules).use { h ->
+            val g = h.guest("alice", guestDir("alice"))
+            awaitState(g, ClientState.CONNECTED)
+            g.client.requestFileChange(FileMutation(FileOpKind.WRITE, "build.gradle.kts", contentBase64 = MessageCodec.encodeBase64("exec {}".toByteArray())))
+            g.client.requestFileChange(FileMutation(FileOpKind.CREATE_FILE, "package.json", contentBase64 = MessageCodec.encodeBase64("{}".toByteArray())))
+            eventually { g.failedFileRequests.size == 2 }
+            assertEquals("plugins {}\n", Files.readString(host.resolve("build.gradle.kts")))
+            assertFalse(Files.exists(host.resolve("package.json")))
+        }
+    }
+
+    @Test
     fun `host IDE state reaches only guests supporting it, and later joiners get the latest`() {
         sampleProject()
         Harness(host).use { h ->

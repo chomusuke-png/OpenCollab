@@ -32,6 +32,9 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
 
+/** How many changed paths a run request lists at most (the oldest are dropped). */
+private const val MAX_GUEST_CHANGES = 500
+
 /** Supplies the host's current text of a shared document (unsaved editor content wins over disk). */
 fun interface DocumentSource {
     /** Returns null if the path cannot be shared as a text document. Called on the session thread. */
@@ -61,16 +64,24 @@ interface HostSessionListener {
     fun onJoinRequestClosed(requestId: String) {}
 }
 
+/** A shared [path] that guests changed, and the names of those who did ([by]). */
+data class GuestChange(val path: String, val by: List<String>)
+
 /** A person waiting to be let in. [address] is where they connect from (for the host to judge). */
 data class JoinRequestInfo(val requestId: String, val displayName: String, val role: Role, val address: String)
 
-/** Either a run [target] or a shell [command] (exactly one is set). */
+/**
+ * Either a run [target] or a shell [command] (exactly one is set). [guestChanges] are the shared
+ * paths guests changed since the host last allowed a run: what would run that the host may not
+ * have looked at.
+ */
 data class RunRequestInfo(
     val requestId: String,
     val participantId: String,
     val displayName: String,
     val target: RunTarget?,
     val command: String? = null,
+    val guestChanges: List<GuestChange> = emptyList(),
 ) {
     /** What to show the host's user. */
     val label: String get() = target?.name ?: command.orEmpty()
@@ -239,6 +250,8 @@ class HostSession(
     private inner class PendingRun(val peer: Peer, val expiry: Cancellable, val permission: String)
     /** Unanswered run requests by "participantId/requestId". */
     private val pendingRuns = HashMap<String, PendingRun>()
+    /** Shared paths guests changed since the host last allowed a run, oldest first, with who changed them. */
+    private val guestChanges = LinkedHashMap<String, LinkedHashSet<String>>()
     private class ConsoleLog(val started: Message.ConsoleStarted) {
         /** [Message.ConsoleOutput] and [Message.ConsoleTests], in order. */
         val chunks = ArrayDeque<Message>()
@@ -771,6 +784,7 @@ class HostSession(
                 throw FileAccessDenied("${mutation.path} is open as a shared document; edit it in the editor")
             }
             files.perform(mutation)
+            recordGuestChange(peer, mutation.path, mutation.newPath)
             invalidateDocuments(mutation)
             publishFileEvent(peer, mutation)
             peer.send(Message.RequestResult(m.requestId, true))
@@ -884,6 +898,7 @@ class HostSession(
         val op = MessageCodec.opFromJson(m.op)
         when (val result = doc.receive(peer.id, m.opId, m.baseRevision, op)) {
             is ServerDocument.Result.Applied -> {
+                recordGuestChange(peer, m.path)
                 peer.send(Message.OpAck(m.path, m.opId, result.revision))
                 val remote = Message.RemoteOp(m.path, m.opId, peer.id, result.revision, MessageCodec.opToJson(result.op))
                 broadcastToSubscribers(m.path, remote, except = peer)
@@ -1114,7 +1129,20 @@ class HostSession(
             exec.execute { if (pendingRuns.remove(key) != null) peer.send(Message.RunResponse(requestId, false, RunRefusal.NO_ANSWER)) }
         }
         pendingRuns[key] = PendingRun(peer, expiry, if (command != null) Permission.COMMANDS else Permission.RUN)
-        listener.onRunRequest(RunRequestInfo(requestId, info.id, info.displayName, target, command))
+        val changes = guestChanges.map { (path, by) -> GuestChange(path, by.toList()) }
+        listener.onRunRequest(RunRequestInfo(requestId, info.id, info.displayName, target, command, changes))
+    }
+
+    private fun recordGuestChange(peer: Peer, vararg paths: String?) {
+        if (peer.role == Role.HOST) return
+        val name = peer.info?.displayName ?: return
+        for (path in paths) {
+            if (path == null) continue
+            val by = guestChanges.remove(path) ?: LinkedHashSet()
+            by += name
+            guestChanges[path] = by // most recent last
+        }
+        while (guestChanges.size > MAX_GUEST_CHANGES) guestChanges.remove(guestChanges.keys.first())
     }
 
     private fun breakpointRequest(peer: Peer, m: Message.BreakpointRequest) {
@@ -1149,6 +1177,8 @@ class HostSession(
                 else -> RunRefusal.NOT_ALLOWED
             }
             peer.send(Message.RunResponse(requestId, granted, reason))
+            // The host allowed a run knowing about these changes: only later ones are news.
+            if (granted) guestChanges.clear()
             result.complete(granted || !accepted) // a refusal always goes through
         }
         if (closed) result.complete(false)

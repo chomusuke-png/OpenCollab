@@ -61,6 +61,36 @@ class SharingRules(
             ".gitmodules", ".envrc", ".tool-versions",
         )
 
+        /**
+         * Build scripts and tool configuration: changing them changes what runs on the host the
+         * next time it builds, runs or tests anything, so guests may only read them unless the
+         * host allows otherwise.
+         */
+        val BUILD_FILES = listOf(
+            // Gradle, Maven, Ant, sbt
+            "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradle.properties",
+            "*.gradle", "*.gradle.kts", "gradle/*.toml", "buildSrc", "build-logic", "init.d",
+            "pom.xml", ".mvn", "build.xml", "build.sbt", "project/*.sbt", "project/*.scala",
+            // JavaScript and TypeScript
+            "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "pnpm-workspace.yaml",
+            ".yarnrc", ".yarnrc.yml", ".pnpmfile.cjs", "bun.lockb", "bunfig.toml", "deno.json", "deno.jsonc",
+            "*.config.js", "*.config.mjs", "*.config.cjs", "*.config.ts", "*.config.mts", "*.config.cts",
+            ".babelrc", ".babelrc.js", ".eslintrc.js", ".eslintrc.cjs",
+            // Python, Ruby, PHP, Rust, Go, .NET, C and C++
+            "pyproject.toml", "setup.py", "setup.cfg", "requirements*.txt", "Pipfile", "Pipfile.lock", "poetry.lock",
+            "tox.ini", "noxfile.py", "conftest.py", "pytest.ini", "manage.py",
+            "Gemfile", "Gemfile.lock", "Rakefile", "*.gemspec", "composer.json", "composer.lock",
+            "Cargo.toml", "Cargo.lock", "build.rs", ".cargo", "go.mod", "go.sum",
+            "*.csproj", "*.fsproj", "*.vbproj", "*.sln", "Directory.Build.props", "Directory.Build.targets",
+            "global.json", "nuget.config", "CMakeLists.txt", "*.cmake", "CMakePresets.json", "Makefile",
+            "makefile", "GNUmakefile", "*.mk", "meson.build", "configure", "configure.ac", "BUILD", "BUILD.bazel",
+            "WORKSPACE", "WORKSPACE.bazel", "MODULE.bazel", "*.bzl", ".bazelrc",
+            // Containers, hooks and scripts that tools run on their own
+            "Dockerfile", "*.dockerfile", "docker-compose*.yml", "docker-compose*.yaml", "compose*.yml",
+            "compose*.yaml", ".devcontainer", ".husky", ".pre-commit-config.yaml", ".githooks", "lefthook.yml",
+            "Justfile", "justfile", "Taskfile.yml", "Procfile",
+        )
+
         /** Secrets, credentials, local-only IDE state and build outputs. */
         val DEFAULT_EXCLUDES = listOf(
             // Local IDE state

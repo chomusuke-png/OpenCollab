@@ -4,9 +4,12 @@
 
 * The **host** is trusted by guests to serve the project; guests are trusted by the host only as
   far as their role allows.
-* An **editor** can change shared source files. Source code, build scripts (`build.gradle.kts`,
-  `pom.xml`, `package.json`) and tests are code that the host may later build or run. Only invite
-  people you would let push to your branch, and review changes before running them.
+* An **editor** can change shared source files, and source code and tests are code that the
+  host may later build or run. Build scripts and tool configuration (`build.gradle.kts`,
+  `pom.xml`, `package.json`, `Makefile`, `Dockerfile` and the like) are read-only for guests by
+  default. When a guest asks to run something, the request lists the files guests changed since
+  the host last allowed a run, build files first. Only invite people you would let push to your
+  branch, and review those changes before allowing a run.
 * The **network** and the **relay** are untrusted for confidentiality and integrity.
 
 ## What protects a session
@@ -39,9 +42,15 @@ With *Show guests the debugger, breakpoints, Git branch and changes, and code st
 sharing on (both default), guests also receive:
 
 * **Console output** of everything the host runs and builds, and test results with stack traces.
+  With *Hide passwords, tokens and keys from guests* (default on), what looks like a secret is
+  replaced by dots before it is sent: well-known token formats (AWS, GitHub, GitLab, Stripe,
+  Slack, Google, JWTs and others), private key blocks, passwords in URLs, `Bearer` credentials
+  and the value after names like `password=` or `API_KEY:`. This is a best effort: it cannot
+  recognise every secret, and a secret split across two pieces of output may get through.
 * **Debugger state** while paused: frame names, file and line, and the names, types and values
   of the selected frame's variables. **Values may contain secrets** (tokens, passwords, personal
-  data in memory): turn this setting off before debugging such code in a session.
+  data in memory). Variables named like a secret are hidden, and the other values are masked as
+  above. Turn off *Show guests the values of debugger variables* to send only names and types.
 * **Git**: the branch name and the paths of changed and unversioned shared files (not their
   diffs). Excluded files are never listed.
 * **Code style** settings.

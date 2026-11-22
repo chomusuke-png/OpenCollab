@@ -29,6 +29,8 @@ import com.intellij.xdebugger.breakpoints.XBreakpointListener
 import com.intellij.xdebugger.breakpoints.XLineBreakpoint
 import dev.opencollab.core.files.SafePath
 import dev.opencollab.core.files.SharingRules
+import dev.opencollab.core.util.SecretMask
+import dev.opencollab.plugin.settings.OpenCollabSettings
 import dev.opencollab.core.protocol.BreakpointLine
 import dev.opencollab.core.protocol.DebugFrame
 import dev.opencollab.core.protocol.Message
@@ -133,8 +135,21 @@ class HostIdeSharing(
         snapshot.collect(current)
         // The debugger fills frames and values in over a short while: send what is known by then.
         for (delay in SNAPSHOT_DELAYS_MS) {
-            scheduler.schedule({ if (debugGeneration.get() == generation) session.publishIdeState(snapshot.message()) }, delay, TimeUnit.MILLISECONDS)
+            scheduler.schedule({ if (debugGeneration.get() == generation) session.publishIdeState(forGuests(snapshot.message())) }, delay, TimeUnit.MILLISECONDS)
         }
+    }
+
+    /** Variable values as the host's settings allow guests to see them. */
+    private fun forGuests(state: Message.DebugState): Message.DebugState {
+        val settings = OpenCollabSettings.getInstance().state
+        if (settings.shareDebugValues && !settings.hideSecrets) return state
+        return state.copy(variables = state.variables.map { v ->
+            when {
+                !settings.shareDebugValues -> v.copy(value = SecretMask.HIDDEN)
+                SecretMask.isSecretName(v.name) -> v.copy(value = SecretMask.HIDDEN)
+                else -> v.copy(value = SecretMask.mask(v.value))
+            }
+        })
     }
 
     private fun frameOf(name: String, position: XSourcePosition?): DebugFrame =

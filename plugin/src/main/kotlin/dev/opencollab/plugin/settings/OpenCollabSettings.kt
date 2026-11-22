@@ -40,6 +40,12 @@ class OpenCollabSettings : PersistentStateComponent<OpenCollabSettings.State> {
         var includes: String = ""
         var extraGuestReadOnly: String = ""
         var maxFileSizeMb: Int = 10
+        /** Guests may only read build scripts and tool configuration ([SharingRules.BUILD_FILES]). */
+        var protectBuildFiles: Boolean = true
+        /** Hide what looks like a password, token or key in consoles and debugger values guests see. */
+        var hideSecrets: Boolean = true
+        /** Show guests the values of the debugger's variables (off: only their names and types). */
+        var shareDebugValues: Boolean = true
         /** Minimum gap between cursor updates during continuous movement; 0 = send every change at once. */
         var presenceIntervalMs: Int = 0
         /** While hosting, send the output of runs, tests and builds to guests. */
@@ -71,7 +77,8 @@ class OpenCollabSettings : PersistentStateComponent<OpenCollabSettings.State> {
     fun sharingRules(): SharingRules = SharingRules(
         excludes = SharingRules.DEFAULT_EXCLUDES + lines(state.extraExcludes),
         includes = lines(state.includes),
-        guestReadOnly = SharingRules.DEFAULT_GUEST_READ_ONLY + lines(state.extraGuestReadOnly),
+        guestReadOnly = SharingRules.DEFAULT_GUEST_READ_ONLY +
+            (if (state.protectBuildFiles) SharingRules.BUILD_FILES else emptyList()) + lines(state.extraGuestReadOnly),
         maxFileBytes = state.maxFileSizeMb.coerceIn(1, SharingRules.MAX_ALLOWED_FILE_MB).toLong() * 1024 * 1024,
     )
 

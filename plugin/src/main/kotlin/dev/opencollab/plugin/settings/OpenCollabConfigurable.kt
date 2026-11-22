@@ -80,6 +80,14 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
                         .comment(message("settings.share.ide.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                 }
                 row {
+                    checkBox(message("settings.share.debug.values")).bindSelected(s::shareDebugValues)
+                        .comment(message("settings.share.debug.values.comment"), MAX_LINE_LENGTH_WORD_WRAP)
+                }
+                row {
+                    checkBox(message("settings.hide.secrets")).bindSelected(s::hideSecrets)
+                        .comment(message("settings.hide.secrets.comment"), MAX_LINE_LENGTH_WORD_WRAP)
+                }
+                row {
                     checkBox(message("settings.allow.commands")).bindSelected(s::allowCommandRequests)
                         .comment(message("settings.allow.commands.comment"), MAX_LINE_LENGTH_WORD_WRAP)
                 }
@@ -106,6 +114,10 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
             }
 
             group(message("settings.group.sharing")) {
+                row {
+                    checkBox(message("settings.protect.build")).bindSelected(s::protectBuildFiles)
+                        .comment(message("settings.protect.build.comment"), MAX_LINE_LENGTH_WORD_WRAP)
+                }
                 row(message("settings.max.size")) {
                     intTextField(1..SharingRules.MAX_ALLOWED_FILE_MB).bindIntText(s::maxFileSizeMb)
                         .comment(message("settings.max.size.comment"), MAX_LINE_LENGTH_WORD_WRAP)

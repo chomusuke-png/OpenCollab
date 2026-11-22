@@ -48,6 +48,7 @@ object Diagnostics {
             appendLine("  Relay: ${onOff(s.enableRelay)}, ${s.relayUrl.ifBlank { "-" }}, fingerprint ${if (s.relayFingerprint.isBlank()) "not set" else "set"}")
             appendLine("  Join approval ${onOff(s.approveJoins)}, invitations expire after ${s.inviteExpiryMinutes} min, single use ${onOff(s.singleUseInvites)}")
             appendLine("  Share consoles ${onOff(s.shareConsoles)}, IDE state ${onOff(s.shareIdeState)}, command requests ${onOff(s.allowCommandRequests)}, max file ${s.maxFileSizeMb} MB")
+            appendLine("  Build files read-only ${onOff(s.protectBuildFiles)}, hide passwords and tokens ${onOff(s.hideSecrets)}, debugger values ${onOff(s.shareDebugValues)}")
             appendLine()
             val log = service.log().takeLast(LOG_LINES)
             appendLine("Activity (last ${log.size} lines):")

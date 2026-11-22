@@ -58,6 +58,8 @@ import dev.opencollab.core.protocol.ConsoleKind
 import dev.opencollab.core.protocol.ConsoleStream
 import dev.opencollab.core.files.ProjectDirMacro
 import dev.opencollab.core.files.SafePath
+import dev.opencollab.core.files.SharingRules
+import dev.opencollab.plugin.settings.OpenCollabSettings
 import dev.opencollab.core.protocol.RunTarget
 import dev.opencollab.core.protocol.RunTargetKind
 import dev.opencollab.core.session.HostSession
@@ -168,11 +170,11 @@ class HostConsoleSharing(
                 return@invokeLater
             }
             val who = StringUtil.escapeXmlEntities(request.displayName)
-            val text = if (command != null) {
+            val text = (if (command != null) {
                 message("command.request", who, StringUtil.escapeXmlEntities(command))
             } else {
                 message("console.request", who, StringUtil.escapeXmlEntities(request.label))
-            }
+            }) + guestChangesHtml(request.guestChanges)
             val notification = NotificationGroupManager.getInstance().getNotificationGroup("OpenCollab")
                 .createNotification(message(if (command != null) "command.request.title" else "console.request.title"), text, NotificationType.WARNING)
             notification.addAction(NotificationAction.createSimpleExpiring(message("console.request.allow")) {
@@ -441,11 +443,14 @@ class HostConsoleSharing(
         }
         for ((id, parts) in batch) {
             for ((stream, text) in parts) {
-                val shared = projectDir.hide(text.toString())
+                val shared = forGuests(projectDir.hide(text.toString()))
                 if (stream == null) session.consoleTests(id, shared) else session.consoleOutput(id, stream, shared)
             }
         }
     }
+
+    private fun forGuests(text: String) =
+        if (OpenCollabSettings.getInstance().state.hideSecrets) dev.opencollab.core.util.SecretMask.mask(text) else text
 
     companion object {
         /** Who asked for a run, on the ExecutionEnvironment of that one launch. */
@@ -456,6 +461,26 @@ class HostConsoleSharing(
             "cfg-" + java.security.MessageDigest.getInstance("SHA-256").digest(settings.uniqueID.toByteArray()).take(12).joinToString("") { "%02x".format(it) }
 
         const val BUILD_ID = "build"
+        /** Changed files named in a run request; the rest are counted. */
+        private const val MAX_LISTED_CHANGES = 8
+
+        /**
+         * What guests changed since the host last allowed a run: it runs with this request, maybe
+         * unreviewed. Build files first, since they run before anything else.
+         */
+        internal fun guestChangesHtml(changes: List<dev.opencollab.core.session.GuestChange>): String {
+            if (changes.isEmpty()) return ""
+            val build = SharingRules(excludes = emptyList(), guestReadOnly = SharingRules.BUILD_FILES)
+            val (buildChanges, others) = changes.reversed().partition { build.isGuestReadOnly(it.path) }
+            val shown = (buildChanges + others).take(MAX_LISTED_CHANGES)
+            val items = shown.joinToString("<br>") { change ->
+                val line = StringUtil.escapeXmlEntities("${change.path} (${change.by.joinToString()})")
+                if (change in buildChanges) "<b>$line</b>" else line
+            }
+            val more = (changes.size - shown.size).takeIf { it > 0 }?.let { "<br>" + message("run.request.changes.more", it) } ?: ""
+            val title = message(if (buildChanges.isNotEmpty()) "run.request.changes.build" else "run.request.changes", changes.size)
+            return "<br><br>$title<br>$items$more"
+        }
         /** Locations in shared test events: `opencollab://relative/path:line`. */
         const val TEST_PROTOCOL = "opencollab"
         private const val SERVICE_MESSAGE = "##teamcity["

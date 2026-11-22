@@ -43,6 +43,9 @@ debugger stopping) stays in the OpenCollab tool window, as a short message on it
 | Listen address / Port | Default `0.0.0.0:47800`. Use `127.0.0.1` to test on one machine. Port `0` picks a free port |
 | Advertised hosts | Addresses written into invitations (e.g. a VPN IP or DNS name). Default: all local IPv4 addresses |
 | Relay URL / fingerprint / host secret | See [RELAY_SERVER.md](RELAY_SERVER.md). The secret is stored in the IDE password safe |
+| Guests can only read build files | Default on: build scripts and tool configuration (`build.gradle`, `pom.xml`, `package.json`, `Makefile`, `Dockerfile`…) decide what runs on your computer, so editors cannot change them |
+| Hide passwords, tokens and keys from guests | Default on: what looks like a secret is replaced by dots in shared output and debugger values (a best effort) |
+| Show guests the values of debugger variables | Default on; off, guests see only names and types |
 | Additional excludes / Explicit includes / Read-only for guests | Sharing rules, see below |
 | Max file size | Files above this are never shared (default 10 MB, up to 2048 MB). Files larger than 8 MB are streamed to guests in chunks with flow control; guests can create/upload files up to 8 MB; text files up to 8 MB are edited live |
 | Cursor update interval | Minimum gap between cursor updates (default 0 ms: every change is sent at once) |

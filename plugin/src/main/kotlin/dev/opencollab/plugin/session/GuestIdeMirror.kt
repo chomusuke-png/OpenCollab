@@ -51,7 +51,6 @@ class GuestIdeMirror(
     private var hostBreakpoints: Set<BreakpointLine> = emptySet()
     private var retries = 0
     private var executionPoint: RangeHighlighter? = null
-    private var pausedNotice: Notification? = null
 
     fun install() {
         project.messageBus.connect(this).subscribe(XBreakpointListener.TOPIC, object : XBreakpointListener<XBreakpoint<*>> {
@@ -77,7 +76,6 @@ class GuestIdeMirror(
 
     override fun dispose() {
         clearExecutionPoint()
-        pausedNotice?.expire()
     }
 
     fun fileOf(path: String): VirtualFile? {
@@ -98,7 +96,6 @@ class GuestIdeMirror(
         clearExecutionPoint()
         val path = state.path
         if (!state.paused || path == null || state.line < 0) {
-            if (!state.paused) pausedNotice?.expire()
             return
         }
         val document = fileOf(path)?.let { FileDocumentManager.getInstance().getDocument(it) }
@@ -109,12 +106,10 @@ class GuestIdeMirror(
             }
         }
         if (!wasPaused) {
-            pausedNotice?.expire()
-            val where = "$path:${state.line + 1}"
-            pausedNotice = NotificationGroupManager.getInstance().getNotificationGroup("OpenCollab")
-                .createNotification(message("debug.paused", where), NotificationType.INFORMATION)
-                .addAction(NotificationAction.createSimpleExpiring(message("debug.show")) { navigate(path, state.line) })
-                .also { it.notify(project) }
+            val where = com.intellij.openapi.util.text.StringUtil.escapeXmlEntities("$path:${state.line + 1}")
+            dev.opencollab.plugin.ui.PanelNotice.show(project, message("debug.paused", where) + "<br><a href=\"show\">" + message("debug.show") + "</a>") {
+                navigate(path, state.line)
+            }
         }
     }
 

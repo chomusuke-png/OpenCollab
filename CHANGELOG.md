@@ -14,6 +14,11 @@ without its own section; the section becomes the release notes on GitHub and the
 
 ## [Unreleased]
 
+### Changed
+- The IDE's **Notifications** are only for people asking to join or to run something on the
+  host. Chat no longer pops up there (unread messages are counted on the Chat tab and in the
+  status bar), and other messages appear on the OpenCollab tool window instead.
+
 ## [3.7.0] - 2026-11-22
 
 ### Added

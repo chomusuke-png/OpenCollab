@@ -18,8 +18,8 @@
    *OpenCollab* submenu appears under *Tools*.
 
 New versions arrive like any other plugin update, with their changes on the plugin's page in
-*Settings | Plugins*. After an update, a notification names the new version and links to what
-changed in it. *Tools | OpenCollab | What's New* opens the [full list](../CHANGELOG.md) at any time.
+*Settings | Plugins*. After an update, a message on the OpenCollab tool window names the new
+version and links to what changed in it. *Tools | OpenCollab | What's New* opens the [full list](../CHANGELOG.md) at any time.
 
 ## Language / Idioma
 
@@ -29,6 +29,10 @@ System Settings | Language and Region*) and restart the IDE. Any other language 
 English. Participants can use different languages in the same session.
 
 La interfaz del plugin está en **inglés** y **español** y sigue el idioma del IDE.
+
+Only people asking to join, and guests asking to run something on the host, show up in the
+IDE's **Notifications**. Everything else (chat, disconnections, answers to your requests, the
+debugger stopping) stays in the OpenCollab tool window, as a short message on it.
 
 ## Configure (Settings | Tools | OpenCollab)
 
@@ -155,7 +159,7 @@ OpenCollab mirror, so it can never overwrite your own data.
   the exact command and must allow each one (there is no "allow for this session" for
   commands); it then runs in a Run tab on the host, which the host can stop, and its output is
   shared like any run. The host can turn this off in *Settings | Tools | OpenCollab | Session*.
-* **Debugger:** when the host's debugger stops, guests get a notification and the line is
+* **Debugger:** when the host's debugger stops, guests get a message on the OpenCollab tool window and the line is
   highlighted in their editor. The **Host** tab at the bottom of the tool window shows the
   frames (double-click to open) and the variables of the selected frame. Breakpoints are shared:
   editors can add and remove line breakpoints in shared files and they appear on the host (and
@@ -175,8 +179,8 @@ OpenCollab mirror, so it can never overwrite your own data.
 * **Chat:** the **Chat** tab at the bottom of the tool window talks to everyone in the session,
   viewers included; press Enter to send. The host stamps who sent each message, keeps the last
   200 and shows them to anyone who joins later. While someone writes, the others see
-  “Name is typing…” above the input. Unread messages are counted on the tab, and a
-  notification pops up while the tool window is hidden. The **Activity** tab next to it has the
+  “Name is typing…” above the input. Unread messages are counted on the tab and in the
+  status bar; chat never goes to the IDE's Notifications. The **Activity** tab next to it has the
   session log. Participants' round-trip time to the host (ms) is shown next to their role, and
   the session time under the status.
 * **Files:** creating, renaming, moving and deleting shared files in the Project view is

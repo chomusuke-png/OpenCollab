@@ -262,17 +262,6 @@ class CollabSessionService(private val project: Project) : Disposable {
         else -> false
     }
 
-    /** Pops up someone else's message when the OpenCollab tool window is hidden. EDT. */
-    private fun notifyChat(entry: ChatEntry) {
-        if (project.isDisposed || entry.participantId == ownParticipantId()) return
-        if (ToolWindowManager.getInstance(project).getToolWindow("OpenCollab")?.isVisible == true) return
-        // Notification content is HTML: escape what other participants typed.
-        val text = StringUtil.escapeXmlEntities(StringUtil.shortenTextWithEllipsis(entry.text, 200, 0))
-        NotificationGroupManager.getInstance().getNotificationGroup("OpenCollab")
-            .createNotification(StringUtil.escapeXmlEntities(entry.displayName), text, NotificationType.INFORMATION)
-            .notify(project)
-    }
-
     private fun fire() = ApplicationManager.getApplication().invokeLater({ listeners.forEach { it.changed() } }, ModalityState.any())
 
     private fun appendLog(line: String) {
@@ -283,10 +272,20 @@ class CollabSessionService(private val project: Project) : Disposable {
         fire()
     }
 
-    /** Notifications can be seen on a stream or shared screen: addresses are hidden unless shown in the settings. */
+    /**
+     * Says something on the OpenCollab tool window (the Notifications list is kept for people asking
+     * to join or to run something). It can be seen on a stream or shared screen: addresses are
+     * hidden unless shown in the settings.
+     */
     private fun notify(message: String, type: NotificationType = NotificationType.INFORMATION, title: String = "") {
         val shown = OpenCollabSettings.getInstance().shown(message)
-        NotificationGroupManager.getInstance().getNotificationGroup("OpenCollab").createNotification(title, shown, type).notify(project)
+        val body = (if (title.isEmpty()) "" else "<b>$title</b><br>") + shown.replace("\n", "<br>")
+        val kind = when (type) {
+            NotificationType.ERROR -> com.intellij.openapi.ui.MessageType.ERROR
+            NotificationType.WARNING -> com.intellij.openapi.ui.MessageType.WARNING
+            else -> com.intellij.openapi.ui.MessageType.INFO
+        }
+        dev.opencollab.plugin.ui.PanelNotice.show(project, body, kind)
     }
 
     private fun projectRoot(): Path {
@@ -350,7 +349,6 @@ class CollabSessionService(private val project: Project) : Disposable {
             chatEntries += entry
             while (chatEntries.size > MAX_CHAT_KEPT) chatEntries.removeAt(0)
             if (!chatOnScreen && entry.participantId != ownParticipantId()) unreadChat++
-            ApplicationManager.getApplication().invokeLater({ notifyChat(entry) }, ModalityState.any())
             fire()
         }
         override fun onConsoleStarted(started: Message.ConsoleStarted) {

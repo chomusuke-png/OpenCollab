@@ -2,14 +2,12 @@ package dev.opencollab.plugin.updates
 
 import com.intellij.ide.BrowserUtil
 import com.intellij.ide.util.PropertiesComponent
-import com.intellij.notification.NotificationAction
-import com.intellij.notification.NotificationGroupManager
-import com.intellij.notification.NotificationType
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 import com.intellij.openapi.updateSettings.impl.UpdateSettings
 import dev.opencollab.plugin.OpenCollabBundle
 import dev.opencollab.plugin.session.Diagnostics
+import dev.opencollab.plugin.ui.PanelNotice
 
 /**
  * Adds OpenCollab's release feed to the IDE's custom plugin repositories, so new versions show up
@@ -64,10 +62,9 @@ object WhatsNew {
     }
 
     fun notifyUpdated(project: Project, version: String) {
-        NotificationGroupManager.getInstance().getNotificationGroup("OpenCollab")
-            .createNotification(OpenCollabBundle.message("whats.new.title", version), OpenCollabBundle.message("whats.new.content"), NotificationType.INFORMATION)
-            .addAction(NotificationAction.createSimpleExpiring(OpenCollabBundle.message("whats.new.open")) { BrowserUtil.browse(releaseUrl(version)) })
-            .notify(project)
+        val html = "<b>" + OpenCollabBundle.message("whats.new.title", version) + "</b><br>" + OpenCollabBundle.message("whats.new.content") +
+            "<br><a href=\"" + releaseUrl(version) + "\">" + OpenCollabBundle.message("whats.new.open") + "</a>"
+        PanelNotice.show(project, html) { BrowserUtil.browse(it) }
     }
 
     private fun parse(version: String) = RELEASE.matchEntire(version)?.groupValues?.drop(1)?.map(String::toInt)

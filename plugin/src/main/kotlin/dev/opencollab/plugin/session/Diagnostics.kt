@@ -92,8 +92,6 @@ object Diagnostics {
     /** Copies the report and says what to check before posting it. */
     fun copy(project: Project) {
         com.intellij.openapi.ide.CopyPasteManager.getInstance().setContents(java.awt.datatransfer.StringSelection(report(project)))
-        com.intellij.notification.NotificationGroupManager.getInstance().getNotificationGroup("OpenCollab")
-            .createNotification(dev.opencollab.plugin.OpenCollabBundle.message("diagnostics.copied"), com.intellij.notification.NotificationType.INFORMATION)
-            .notify(project)
+        dev.opencollab.plugin.ui.PanelNotice.show(project, dev.opencollab.plugin.OpenCollabBundle.message("diagnostics.copied"))
     }
 }

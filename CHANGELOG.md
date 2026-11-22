@@ -14,6 +14,8 @@ without its own section; the section becomes the release notes on GitHub and the
 
 ## [Unreleased]
 
+## [3.7.0] - 2026-11-22
+
 ### Added
 - **What's new**: after an update the IDE says which version you now have, with a link to its
   changes. *Tools | OpenCollab | What's New* shows this page at any time, and the plugin's page

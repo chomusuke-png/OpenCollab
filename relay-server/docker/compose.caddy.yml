@@ -4,17 +4,13 @@
 # Needs a domain whose DNS points to this server, and ports 80 and 443 open.
 #
 #   openssl rand -base64 32 > relay-secret.txt
-#   RELAY_DOMAIN=relay.example.com docker compose -f compose.caddy.yml up -d --build
+#   RELAY_DOMAIN=relay.example.com docker compose -f compose.caddy.yml up -d
 #
 # Relay URL in the plugin: wss://relay.example.com
 services:
   relay:
-    build:
-      context: ../..
-      dockerfile: relay-server/Dockerfile
-      args:
-        VERSION: ${OPENCOLLAB_VERSION:-dev}
-    image: opencollab-relay:${OPENCOLLAB_VERSION:-dev}
+    # Published for each release; OPENCOLLAB_VERSION picks one (e.g. 3 for the newest 3.x.y).
+    image: ghcr.io/chomusuke-png/opencollab-relay:${OPENCOLLAB_VERSION:-latest}
     restart: unless-stopped
     # Plain WebSocket on the loopback only; Caddy shares this container's network and does TLS.
     command: ["--plain-behind-proxy", "--bind", "127.0.0.1", "--port", "8080", "--host-secret-file", "/run/secrets/relay_secret"]

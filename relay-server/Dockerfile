@@ -3,7 +3,9 @@
 # See docs/RELAY_SERVER.md ("Docker") for compose files and the TLS choices.
 
 # ---- Build: only core, transport and the relay (no IntelliJ download) ----------------------
-FROM eclipse-temurin:21-jdk AS build
+# On the machine's own platform: the JAR is the same for every platform, so an arm64 image
+# does not compile under emulation.
+FROM --platform=$BUILDPLATFORM eclipse-temurin:21-jdk AS build
 WORKDIR /src
 # The image has no git history, so the version is passed in.
 ARG VERSION=dev

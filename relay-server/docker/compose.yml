@@ -2,18 +2,14 @@
 # stays the same across restarts. Hosts enter that fingerprint in the plugin settings.
 #
 #   openssl rand -base64 32 > relay-secret.txt
-#   docker compose up -d --build
+#   docker compose up -d
 #   docker compose logs relay        # shows the fingerprint
 #
 # For a public domain with a free Let's Encrypt certificate, use compose.caddy.yml instead.
 services:
   relay:
-    build:
-      context: ../..
-      dockerfile: relay-server/Dockerfile
-      args:
-        VERSION: ${OPENCOLLAB_VERSION:-dev}
-    image: opencollab-relay:${OPENCOLLAB_VERSION:-dev}
+    # Published for each release; OPENCOLLAB_VERSION picks one (e.g. 3 for the newest 3.x.y).
+    image: ghcr.io/chomusuke-png/opencollab-relay:${OPENCOLLAB_VERSION:-latest}
     restart: unless-stopped
     ports:
       - "${RELAY_PORT:-8443}:8443"

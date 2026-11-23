@@ -86,6 +86,13 @@ To publish a release:
 notes. It refuses to publish when there is nothing new since the last tag, or when the
 changelog has no section for the version.
 
+Publishing the release also starts the *Relay image* workflow, which publishes the relay server
+image `ghcr.io/chomusuke-png/opencollab-relay` with the tags `X.Y.Z`, `X.Y`, `X` and `latest`. To
+publish the image of an existing release, run that workflow by hand (*Actions | Relay image | Run
+workflow*) with its tag. After the first image, make the package public once, in *Package
+settings | Change visibility* on the package's page on GitHub; until then nobody can download it
+without logging in.
+
 Installed copies update themselves: on first start the plugin adds
 `https://github.com/chomusuke-png/OpenCollab/releases/latest/download/updatePlugins.xml` to
 *Settings | Plugins | ⚙ | Manage Plugin Repositories…*, and the IDE then offers each new

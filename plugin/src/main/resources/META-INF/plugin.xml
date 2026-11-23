@@ -10,7 +10,7 @@
     <resource-bundle>messages.OpenCollabBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow id="OpenCollab" anchor="right" icon="AllIcons.Toolwindows.ToolWindowServices"
+        <toolWindow id="OpenCollab" anchor="right" icon="/icons/toolWindow.svg"
                     factoryClass="dev.opencollab.plugin.ui.CollabToolWindowFactory"/>
         <applicationConfigurable parentId="tools" id="dev.opencollab.settings"
                                  bundle="messages.OpenCollabBundle" key="configurable.name"

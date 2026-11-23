@@ -34,11 +34,11 @@ object CollabUi {
     private const val GOOD_PING_MS = 100
 
     /** Short-lived balloon under [anchor]; [text] is plain text. */
-    fun toast(anchor: JComponent, text: String, type: MessageType = MessageType.INFO) {
+    fun toast(anchor: JComponent, text: String, type: MessageType = MessageType.INFO, fadeoutMillis: Long = 2_500) {
         if (!anchor.isShowing) return
         JBPopupFactory.getInstance()
-            .createHtmlTextBalloonBuilder(StringUtil.escapeXmlEntities(text), type, null)
-            .setFadeoutTime(2_500)
+            .createHtmlTextBalloonBuilder(StringUtil.escapeXmlEntities(text).replace("\n", "<br>"), type, null)
+            .setFadeoutTime(fadeoutMillis)
             .createBalloon()
             .show(RelativePoint.getSouthOf(anchor), Balloon.Position.below)
     }

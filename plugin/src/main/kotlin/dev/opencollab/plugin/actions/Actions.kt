@@ -35,8 +35,13 @@ class LeaveSessionAction : CollabAction() {
 
 class CopyInviteAction : CollabAction() {
     override fun actionPerformed(e: AnActionEvent) {
-        val hosting = e.session()?.mode as? CollabSessionService.Mode.Hosting ?: return
+        val service = e.session() ?: return
+        val hosting = service.mode as? CollabSessionService.Mode.Hosting ?: return
         CopyPasteManager.getInstance().setContents(StringSelection(hosting.editorInvite))
+        // The invitation only works on this network (or computer): say so where the host looks.
+        service.reachWarning(hosting.reach)?.let { warning ->
+            e.project?.let { dev.opencollab.plugin.ui.PanelNotice.show(it, com.intellij.openapi.util.text.StringUtil.escapeXmlEntities(warning), com.intellij.openapi.ui.MessageType.WARNING) }
+        }
     }
     override fun update(e: AnActionEvent) { e.presentation.isEnabled = e.session()?.mode is CollabSessionService.Mode.Hosting }
 }

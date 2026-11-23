@@ -12,6 +12,10 @@ addresses, your user folder, the project path and participants' names hidden.
 |---|---|
 | *Could not start: Cannot listen on 0.0.0.0:47800* | The port is in use (another IDE hosting?). Change *Port* or use `0` for a free port |
 | *Enable direct connections or a relay* | Both are disabled in *Settings \| Tools \| OpenCollab* |
+| Host: *These invitations only work for people on your network or VPN* | Every address in the invitation is private. People elsewhere cannot reach it: set up the relay, or port forwarding (automatic or by hand), then copy a new invitation |
+| Host: *These invitations only work on this computer* | The listen address is `127.0.0.1` or the relay URL is `localhost`. Set the listen address to `0.0.0.0` (or this computer's LAN address), or use a relay others can reach |
+| Host: *Relay URL wss://0.0.0.0:… is not an address anyone can connect to* | `0.0.0.0` is where the relay server listens. In *Relay URL* enter the relay server's public address or domain, for example `wss://relay.example.com:8443` (the installer prints it) |
+| Guest: *The host's relay address … only works on the host's own computer* | The host's *Relay URL* is `0.0.0.0` or `localhost`. The host must enter the relay's public address or domain and send a new invitation |
 | Guest: *Cannot connect to wss://…: timed out* | The host address is not reachable: firewall, different network, or the advertised address is wrong. Allow inbound TCP on the port in the host firewall, set *Advertised hosts* to a reachable address, or use the relay |
 | Guest: *TLS certificate rejected … does not match the invitation* | The invitation belongs to an older session (each session has a new certificate), or something intercepts the connection. Ask the host for a fresh invitation |
 | Guest: *Host refused the connection: Invalid or expired invitation* | The session was restarted or the token is wrong. Get a new invitation |

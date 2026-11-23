@@ -14,6 +14,14 @@ without its own section; the section becomes the release notes on GitHub and the
 
 ## [Unreleased]
 
+### Added
+- **The host learns who can use an invitation before sending it:** when all its addresses are
+  private (or only this computer), the tool window says that only people on your network can
+  join, with a link to the connection settings, and copying the invitation says it again.
+- **Relay URL checks:** a listen address such as `wss://0.0.0.0:…` is refused (in the settings and
+  when hosting starts), and `localhost` or a private address gets a warning, since guests could
+  not reach it. A guest given such an invitation is told what the host must change.
+
 ### Changed
 - The plugin's author in *Settings | Plugins* is now **chomusuke-png & hi444** instead of
   "OpenCollab contributors".

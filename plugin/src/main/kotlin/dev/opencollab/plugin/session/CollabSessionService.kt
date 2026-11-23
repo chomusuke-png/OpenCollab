@@ -86,11 +86,14 @@ class CollabSessionService(private val project: Project) : Disposable {
             val consoles: HostConsoleSharing,
             /** The debugger, breakpoints, VCS status and code style shown to guests; null when not shared. */
             val ide: HostIdeSharing?,
+            /** Who can use new invitations, from their addresses (it changes when the router maps a port). */
+            private val reachOf: () -> NetworkHints.Reach = { NetworkHints.Reach.INTERNET },
         ) : Mode
         {
             /** Each read creates a new invitation; invitations can be revoked all at once. */
             val editorInvite: String get() = makeInvite(Role.EDITOR)
             val viewerInvite: String get() = makeInvite(Role.VIEWER)
+            val reach: NetworkHints.Reach get() = reachOf()
         }
         class Joined(val client: CollabClient, val bridge: IdeBridge, val project: String) : Mode
     }
@@ -575,6 +578,8 @@ class CollabSessionService(private val project: Project) : Disposable {
         }
         if (s.enableRelay) {
             if (s.relayUrl.isBlank()) throw IOException(message("error.relay.url"))
+            // A listen address such as 0.0.0.0 is no place to connect to: guests would be refused.
+            if (NetworkHints.reachOfUrl(s.relayUrl) == NetworkHints.Reach.NOBODY) throw IOException(message("error.relay.unspecified", s.relayUrl.trim()))
             val trust = s.relayFingerprint.takeIf { it.isNotBlank() }?.let { TrustMode.PinnedRelay(it) } ?: TrustMode.SystemCertificateAuthorities
             val relay = RelayHostTransport(URI(s.relayUrl.trim()), settings.relaySecret, trust, identity) { appendLog(it) }
             try {
@@ -611,7 +616,10 @@ class CollabSessionService(private val project: Project) : Disposable {
             fingerprint = identity.fingerprint,
             consoles = HostConsoleSharing(project, root, session, s.shareConsoles) { appendLog(it) }.also { consoleSharing = it },
             ide = if (s.shareIdeState) HostIdeSharing(project, root, rules, session) { appendLog(it) }.also { ideSharing = it } else null,
+            reachOf = { NetworkHints.inviteReach((endpoints + listOfNotNull(routerEndpoint)).distinct(), relayUrl) },
         )
+        // Said once, when hosting starts; the tool window keeps showing it while it is true.
+        reachWarning(hosting.reach)?.let(::appendLog)
         ApplicationManager.getApplication().invokeAndWait({
             bridge.install()
             hosting.consoles.install()
@@ -779,6 +787,13 @@ class CollabSessionService(private val project: Project) : Disposable {
     @Volatile private var joinedOnce = false
     @Volatile private var joiningInvite: Invite? = null
 
+    /** Host: who cannot use the invitations, in actionable terms; null when anyone on the internet can. */
+    fun reachWarning(reach: NetworkHints.Reach = (mode as? Mode.Hosting)?.reach ?: NetworkHints.Reach.INTERNET): String? = when (reach) {
+        NetworkHints.Reach.INTERNET -> null
+        NetworkHints.Reach.LOCAL_NETWORK -> message("hint.reach.local")
+        NetworkHints.Reach.THIS_COMPUTER, NetworkHints.Reach.NOBODY -> message("hint.reach.self")
+    }
+
     /** Explains a failed first connection in actionable terms (localized). */
     private fun connectionHint(detail: String): String? {
         val invite = joiningInvite ?: return null
@@ -788,7 +803,10 @@ class CollabSessionService(private val project: Project) : Disposable {
         val foreign = NetworkHints.unreachableDirectEndpoints(invite)
         // Endpoints that are neither on our subnet nor another private network: public / forwarded.
         val public = NetworkHints.publicEndpoints(invite)
+        val relayReach = invite.relay?.let(NetworkHints::reachOfUrl)
         return when {
+            // e.g. the host entered its relay's listen address (0.0.0.0) or localhost as Relay URL.
+            relayReach != null && relayReach <= NetworkHints.Reach.THIS_COMPUTER -> message("hint.relay.local", invite.relay!!)
             public.isNotEmpty() && invite.relay == null -> {
                 val first = java.net.URI(public.first())
                 message("hint.forwarding.failed", first.host, first.port)

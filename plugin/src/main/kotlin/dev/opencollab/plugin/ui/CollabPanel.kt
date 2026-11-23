@@ -9,6 +9,7 @@ import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.ide.CopyPasteManager
+import com.intellij.openapi.ui.MessageType
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.DumbAwareToggleAction
@@ -120,6 +121,14 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
     private val endpoints = JBLabel().apply { foreground = UIUtil.getContextHelpForeground() }
     /** Host: what the router says about automatic port forwarding. */
     private val routerStatus = JBLabel().apply { foreground = UIUtil.getContextHelpForeground() }
+    /** Host: shown while the invitations only work on this network or this computer. */
+    private val reachHint = JBLabel().apply { icon = AllIcons.General.Warning }
+    private val reachPanel = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        isOpaque = false
+        add(reachHint.apply { alignmentX = java.awt.Component.LEFT_ALIGNMENT })
+        add(ActionLink(message("panel.reach.settings")) { openSettings() }.apply { alignmentX = java.awt.Component.LEFT_ALIGNMENT })
+    }
 
     // ---- Host: people waiting to be let in (also offered as notifications, which can be missed)
     private val requestsTitle = JBLabel().apply { font = JBUI.Fonts.label().asBold(); border = JBUI.Borders.empty(4, 0, 2, 0) }
@@ -167,7 +176,7 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         }
         val header = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            add(row(status, fill = true)); add(row(sessionTime, fill = true)); add(row(routerStatus, fill = true)); add(row(buttons, fill = true)); add(row(detailsLink)); add(row(endpoints, fill = true))
+            add(row(status, fill = true)); add(row(sessionTime, fill = true)); add(row(routerStatus, fill = true)); add(row(reachPanel, fill = true)); add(row(buttons, fill = true)); add(row(detailsLink)); add(row(endpoints, fill = true))
             add(row(requestsPanel, fill = true))
         }
         list.cellRenderer = ParticipantRenderer()
@@ -203,7 +212,7 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
     private fun row(c: JComponent, fill: Boolean = false) = JPanel(BorderLayout()).apply {
         add(c, if (fill) BorderLayout.CENTER else BorderLayout.WEST)
         border = JBUI.Borders.emptyBottom(4)
-        alignmentX = LEFT_ALIGNMENT
+        alignmentX = java.awt.Component.LEFT_ALIGNMENT
     }
 
     private fun openSettings() = ShowSettingsUtil.getInstance().showSettingsDialog(project, OpenCollabConfigurable::class.java)
@@ -286,10 +295,15 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         menu.show(inviteButton, 0, inviteButton.height)
     }
 
-    /** Copies an invitation and confirms with a short balloon, leaving the status line alone. */
+    /**
+     * Copies an invitation and confirms with a short balloon, leaving the status line alone. When
+     * the invitation only works on this network (or computer), the balloon says so and stays longer.
+     */
     private fun copyInvite(invite: String, confirmation: String) {
         CopyPasteManager.getInstance().setContents(StringSelection(invite))
-        CollabUi.toast(inviteButton, confirmation)
+        val warning = service.reachWarning()
+        if (warning == null) CollabUi.toast(inviteButton, confirmation)
+        else CollabUi.toast(inviteButton, confirmation + "\n\n" + warning, MessageType.WARNING, fadeoutMillis = 10_000)
     }
 
     private fun detailsExpanded() = PropertiesComponent.getInstance().getBoolean(DETAILS_KEY, false)
@@ -449,6 +463,9 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
         routerStatus.isVisible = router != null
         routerStatus.text = router?.let { "<html>${StringUtil.escapeXmlEntities(shown(it))}</html>" } ?: ""
         routerStatus.icon = if (router != null && service.routerProblem) AllIcons.General.Warning else null
+        val reach = hosting?.let { service.reachWarning(it.reach) }
+        reachPanel.isVisible = reach != null
+        reachHint.text = reach?.let { "<html>${StringUtil.escapeXmlEntities(it)}</html>" } ?: ""
         refreshJoinRequests(hosting != null)
 
         val selectedId = list.selectedValue?.id
@@ -492,7 +509,7 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
                 add(JButton(message("join.request.reject")).apply { addActionListener { service.answerJoin(request.requestId, false) } })
             }
             requestRows.add(JPanel(BorderLayout()).apply {
-                alignmentX = LEFT_ALIGNMENT
+                alignmentX = java.awt.Component.LEFT_ALIGNMENT
                 border = JBUI.Borders.empty(2, 0)
                 add(who, BorderLayout.CENTER)
                 add(JBLabel(roleName(request.role)).apply { foreground = UIUtil.getContextHelpForeground(); border = JBUI.Borders.emptyLeft(6) }, BorderLayout.SOUTH)

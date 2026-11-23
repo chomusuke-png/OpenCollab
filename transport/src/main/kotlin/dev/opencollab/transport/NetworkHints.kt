@@ -80,6 +80,48 @@ object NetworkHints {
             isPrivateAddressOnAnotherNetwork(host, networks)
         }
 
+    /** Who can use an address, as far as the address itself tells (no DNS lookups). */
+    enum class Reach { NOBODY, THIS_COMPUTER, LOCAL_NETWORK, INTERNET }
+
+    /**
+     * Who can reach [host]: `0.0.0.0` and `::` nobody (a listen address, not a destination),
+     * loopback only this computer, private, link-local, carrier-grade NAT / Tailscale (100.64/10),
+     * IPv6 unique-local and `.local` names only the local network or a VPN, anything else
+     * (public addresses, DNS names) the internet.
+     */
+    fun reachOf(host: String): Reach {
+        val h = host.trim().trim('[', ']').lowercase()
+        if (h.isEmpty()) return Reach.NOBODY
+        if (h == "localhost" || h.endsWith(".localhost")) return Reach.THIS_COMPUTER
+        if (h.endsWith(".local") || h.endsWith(".lan") || h.endsWith(".home.arpa")) return Reach.LOCAL_NETWORK
+        val ipv4 = parseIpv4(h)
+        val address = when {
+            ipv4 != null -> InetAddress.getByAddress(ipv4)
+            ':' in h -> runCatching { InetAddress.getByName(h) }.getOrNull() ?: return Reach.NOBODY // a literal: no lookup
+            else -> return Reach.INTERNET // a DNS name
+        }
+        val bytes = address.address
+        return when {
+            address.isAnyLocalAddress -> Reach.NOBODY
+            address.isLoopbackAddress -> Reach.THIS_COMPUTER
+            address.isSiteLocalAddress || address.isLinkLocalAddress -> Reach.LOCAL_NETWORK
+            bytes.size == 4 && (bytes[0].toInt() and 0xff) == 100 && (bytes[1].toInt() and 0xc0) == 64 -> Reach.LOCAL_NETWORK
+            bytes.size == 16 && (bytes[0].toInt() and 0xfe) == 0xfc -> Reach.LOCAL_NETWORK
+            else -> Reach.INTERNET
+        }
+    }
+
+    /** Who can reach the host of a `wss://` URL; [Reach.NOBODY] when it is not a URL. */
+    fun reachOfUrl(url: String): Reach =
+        runCatching { URI(url.trim()).host }.getOrNull()?.let(::reachOf) ?: Reach.NOBODY
+
+    /**
+     * Who can use an invitation with these addresses: the widest reach of its direct endpoints
+     * and its relay. Seen from the host, before anyone tries.
+     */
+    fun inviteReach(direct: List<String>, relay: String?): Reach =
+        (direct + listOfNotNull(relay)).map(::reachOfUrl).maxOrNull() ?: Reach.NOBODY
+
     internal fun parseIpv4(host: String): ByteArray? {
         val parts = host.split('.')
         if (parts.size != 4) return null

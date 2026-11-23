@@ -1,0 +1,14 @@
+# Builds the relay image from this checkout instead of downloading the published one. Add it
+# after the main compose file, from relay-server/docker:
+#
+#   docker compose -f compose.yml -f compose.build.yml up -d --build
+#   RELAY_DOMAIN=relay.example.com docker compose -f compose.caddy.yml -f compose.build.yml up -d --build
+services:
+  relay:
+    build:
+      context: ../..
+      dockerfile: relay-server/Dockerfile
+      args:
+        VERSION: ${OPENCOLLAB_VERSION:-dev}
+    image: opencollab-relay:${OPENCOLLAB_VERSION:-dev}
+    pull_policy: build

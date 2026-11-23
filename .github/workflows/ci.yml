@@ -67,6 +67,8 @@ jobs:
           echo "ci-only-secret-0123456789" > relay-secret.txt
           docker compose -f compose.yml config --quiet
           RELAY_DOMAIN=relay.example.com docker compose -f compose.caddy.yml config --quiet
+          docker compose -f compose.yml -f compose.build.yml config --quiet
+          RELAY_DOMAIN=relay.example.com docker compose -f compose.caddy.yml -f compose.build.yml config --quiet
 
       - name: Build the image
         run: docker build -f relay-server/Dockerfile --build-arg VERSION=ci -t opencollab-relay:ci .

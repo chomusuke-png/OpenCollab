@@ -122,14 +122,28 @@ WantedBy=multi-user.target
 
 ## Docker
 
-The image builds the relay from source and runs it as an unprivileged user. Everything is in
-`relay-server/`: the `Dockerfile` and, in `relay-server/docker/`, two compose files. Run the
-commands below from that folder on the server, after cloning the repository.
+Each release publishes a ready image, for `linux/amd64` and `linux/arm64` (for example a
+Raspberry Pi or an ARM cloud server):
 
-First create the host secret (hosts enter it in *Settings | Tools | OpenCollab*):
+```
+ghcr.io/chomusuke-png/opencollab-relay:latest     # newest release
+ghcr.io/chomusuke-png/opencollab-relay:3          # newest 3.x.y
+ghcr.io/chomusuke-png/opencollab-relay:3.9.0      # exactly that release
+```
+
+It runs the relay as an unprivileged user. The compose files in `relay-server/docker/` use this image, so the server needs only
+those files, not the source code. In an empty folder on the server:
 
 ```bash
-cd relay-server/docker
+curl -fsSLO https://raw.githubusercontent.com/chomusuke-png/OpenCollab/main/relay-server/docker/compose.yml
+# with a domain, also:
+curl -fsSLO https://raw.githubusercontent.com/chomusuke-png/OpenCollab/main/relay-server/docker/compose.caddy.yml
+curl -fsSLO https://raw.githubusercontent.com/chomusuke-png/OpenCollab/main/relay-server/docker/Caddyfile
+```
+
+Then create the host secret (hosts enter it in *Settings | Tools | OpenCollab*):
+
+```bash
 openssl rand -base64 32 > relay-secret.txt
 ```
 
@@ -144,7 +158,7 @@ free Let's Encrypt certificate for your domain and renews it. Point the domain's
 server, open ports 80 and 443, then:
 
 ```bash
-RELAY_DOMAIN=relay.example.com docker compose -f compose.caddy.yml up -d --build
+RELAY_DOMAIN=relay.example.com docker compose -f compose.caddy.yml up -d
 ```
 
 In the plugin: *Relay URL* `wss://relay.example.com`, *Relay certificate fingerprint* empty.
@@ -159,21 +173,23 @@ address instead of each person's address.
 fingerprint does not change when the container restarts or is rebuilt:
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 docker compose logs relay   # Self-signed relay certificate fingerprint (SHA-256): AB:CD:...
 ```
 
 In the plugin: *Relay URL* `wss://<server address>:8443`, *Relay certificate fingerprint* the
 printed value. Set `RELAY_PORT` to publish another port. Deleting the `relay-data` volume makes a
-new certificate, and hosts must then enter the new fingerprint.
+new certificate, and hosts must then enter the new fingerprint. A newer image keeps the
+certificate, since it is in the volume.
 
 ### Updating and other settings
 
 ```bash
-git pull && docker compose up -d --build     # add -f compose.caddy.yml if you use it
+docker compose pull && docker compose up -d     # add -f compose.caddy.yml if you use it
 ```
 
-Set `OPENCOLLAB_VERSION` to label the image with a version (it defaults to `dev`). To pass other
+`OPENCOLLAB_VERSION` picks the image: `latest` by default, or for example `3` to stay on the
+newest 3.x.y, or `3.9.0` to keep exactly that one. To pass other
 options (`--max-rooms`, `--max-peers`, your own `--keystore`), override `command:` in the compose
 file; the image's default command is
 `--self-signed --keep-certificate /data/relay.p12 --host-secret-file /run/secrets/relay_secret`.
@@ -181,12 +197,26 @@ file; the image's default command is
 Without compose:
 
 ```bash
-docker build -f relay-server/Dockerfile -t opencollab-relay .   # from the repository root
-docker run -d --name opencollab-relay --restart unless-stopped -p 8443:8443 -v relay-data:/data   -v "$PWD/relay-server/docker/relay-secret.txt:/run/secrets/relay_secret:ro"   opencollab-relay
+docker run -d --name opencollab-relay --restart unless-stopped -p 8443:8443 -v relay-data:/data   -v "$PWD/relay-secret.txt:/run/secrets/relay_secret:ro" ghcr.io/chomusuke-png/opencollab-relay:latest
 ```
 
 (Mount the secret as a file rather than passing `OPENCOLLAB_RELAY_SECRET` with `-e`, which
 `docker inspect` shows to anyone who can use Docker on the server.)
+
+### Building the image yourself
+
+To run your own changes, or not to depend on the published image, build it from a clone of the
+repository. `compose.build.yml` adds the build to either compose file:
+
+```bash
+cd relay-server/docker
+docker compose -f compose.yml -f compose.build.yml up -d --build
+RELAY_DOMAIN=relay.example.com docker compose -f compose.caddy.yml -f compose.build.yml up -d --build
+docker build -f relay-server/Dockerfile -t opencollab-relay .   # or by hand, from the repository root
+```
+
+The image is then labelled `dev`, or `OPENCOLLAB_VERSION` if set. The published images are built
+the same way by `.github/workflows/relay-image.yml` when a release is published.
 
 ## Behaviour and limits
 

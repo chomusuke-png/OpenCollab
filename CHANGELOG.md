@@ -15,6 +15,9 @@ without its own section; the section becomes the release notes on GitHub and the
 ## [Unreleased]
 
 ### Added
+- **Relay image on GitHub:** each release publishes the relay server as
+  `ghcr.io/chomusuke-png/opencollab-relay` (amd64 and arm64). The compose files use it, so a
+  server needs only them, not the source code. See [the relay guide](docs/RELAY_SERVER.md#docker).
 - **Welcome after installing:** a notice explains how to share a project and how to join one,
   with buttons for the [user guide](docs/USER_GUIDE.md) and the tool window. The guide also opens
   from *Tools | OpenCollab | User Guide* and from the tool window.

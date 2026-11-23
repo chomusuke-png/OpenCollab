@@ -122,6 +122,43 @@ WantedBy=multi-user.target
 
 ## Docker
 
+### Quick install
+
+One command installs the relay with Docker and asks what it needs: the folder, whether you have
+a domain (then Caddy gets a free Let's Encrypt certificate) and otherwise the port. It creates
+the host secret, starts the relay and prints what hosts enter in the plugin: the relay URL, the
+secret and, without a domain, the certificate fingerprint.
+
+Linux, Windows inside WSL, macOS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chomusuke-png/OpenCollab/main/relay-server/install.sh | sh
+```
+
+Windows with Docker Desktop, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/chomusuke-png/OpenCollab/main/relay-server/install.ps1 | iex
+```
+
+* Docker must be installed and running: on Windows and macOS, open Docker Desktop first. The
+  installer checks it and says what is missing.
+* Run it again to update the relay to the newest image. It keeps the settings, the secret and the
+  certificate, so hosts change nothing.
+* Without questions: `curl -fsSL …/install.sh | sh -s -- --yes --domain relay.example.com`, or
+  `--port 8443` for a self-signed relay. Other options: `--dir <folder>` (default
+  `~/opencollab-relay`), `--version <tag>`. In PowerShell:
+  `& ([scriptblock]::Create((irm …/install.ps1))) -Yes -Port 8443`, with `-Dir`, `-Domain` and
+  `-Version`.
+* It writes the files described below to that folder: the compose files, `relay-secret.txt` and a
+  `.env` with your choices. After editing `.env`, run `docker compose up -d` in the folder.
+* It contacts only GitHub (for the compose files and the image), and Let's Encrypt when you use a
+  domain. It does not open ports in the firewall or the router: do that yourself.
+
+The rest of this section does the same by hand.
+
+### By hand
+
 Each release publishes a ready image, for `linux/amd64` and `linux/arm64` (for example a
 Raspberry Pi or an ARM cloud server):
 

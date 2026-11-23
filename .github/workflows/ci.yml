@@ -103,3 +103,34 @@ jobs:
           docker rm -f relay
           echo "first $first"; echo "second $second"
           [ "$first" = "$second" ]
+
+      # Both installers with the image built above (not the published one) and this checkout's
+      # compose files: what they print must match what the relay serves, and running them
+      # again must update without changing the secret or the certificate.
+      - name: Installers
+        env:
+          OPENCOLLAB_SOURCE: ${{ github.workspace }}/relay-server/docker
+          OPENCOLLAB_PULL: missing
+        run: |
+          docker tag opencollab-relay:ci ghcr.io/chomusuke-png/opencollab-relay:ci
+          served() {
+            for i in $(seq 1 30); do
+              f=$(openssl s_client -connect "127.0.0.1:$1" </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256 2>/dev/null | sed 's/.*=//')
+              [ -n "$f" ] && { echo "$f"; return; }
+              sleep 1
+            done
+          }
+          check() { # check <name> <port> <dir> <install command...>
+            name=$1 port=$2 dir=$3; shift 3
+            "$@" > "out-$name-1.txt"
+            printed=$(sed -n 's/.*fingerprint: *\([0-9A-F:]*\)$/\1/p' "out-$name-1.txt")
+            secret=$(cat "$dir/relay-secret.txt")
+            [ -n "$printed" ] && [ "$printed" = "$(served "$port")" ] || { cat "out-$name-1.txt"; echo "$name: printed '$printed', served '$(served "$port")'" >&2; exit 1; }
+            grep -qF "$secret" "out-$name-1.txt" || { echo "$name: secret not shown" >&2; exit 1; }
+            "$@" > "out-$name-2.txt"
+            [ "$secret" = "$(cat "$dir/relay-secret.txt")" ] && [ "$printed" = "$(served "$port")" ] || { cat "out-$name-2.txt"; echo "$name: the update changed the secret or the certificate" >&2; exit 1; }
+            (cd "$dir" && docker compose down -v)
+            echo "$name ok: $printed"
+          }
+          check sh 8444 "$RUNNER_TEMP/relay-sh" sh relay-server/install.sh --yes --dir "$RUNNER_TEMP/relay-sh" --port 8444 --version ci
+          check ps1 8445 "$RUNNER_TEMP/relay-ps1" pwsh -NoProfile -File relay-server/install.ps1 -Yes -Dir "$RUNNER_TEMP/relay-ps1" -Port 8445 -Version ci

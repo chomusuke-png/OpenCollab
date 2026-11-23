@@ -21,6 +21,10 @@ without its own section; the section becomes the release notes on GitHub and the
 - **Relay URL checks:** a listen address such as `wss://0.0.0.0:…` is refused (in the settings and
   when hosting starts), and `localhost` or a private address gets a warning, since guests could
   not reach it. A guest given such an invitation is told what the host must change.
+- **One-command relay install:** `install.sh` (Linux, WSL, macOS) and `install.ps1` (Windows with
+  Docker Desktop) check Docker, ask whether you have a domain or which port to use, create the
+  host secret, start the relay and print what hosts enter in the plugin. Running it again
+  updates the relay. See [the relay guide](docs/RELAY_SERVER.md#quick-install).
 
 ### Changed
 - The plugin's author in *Settings | Plugins* is now **chomusuke-png & hi444** instead of

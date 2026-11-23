@@ -31,6 +31,7 @@
             <action id="OpenCollab.Leave" class="dev.opencollab.plugin.actions.LeaveSessionAction"/>
             <separator/>
             <action id="OpenCollab.CopyDiagnostics" class="dev.opencollab.plugin.actions.CopyDiagnosticsAction"/>
+            <action id="OpenCollab.UserGuide" class="dev.opencollab.plugin.actions.UserGuideAction"/>
             <action id="OpenCollab.WhatsNew" class="dev.opencollab.plugin.actions.WhatsNewAction"/>
         </group>
     </actions>

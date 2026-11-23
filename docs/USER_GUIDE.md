@@ -16,6 +16,10 @@
 2. *Settings | Plugins | ⚙ (gear) | Install Plugin from Disk…* and pick the ZIP.
 3. Restart the IDE if asked. An **OpenCollab** tool window appears on the right side bar and an
    *OpenCollab* submenu appears under *Tools*.
+4. A welcome notice explains how to share a project and how to join one, with buttons that open
+   this guide and the tool window. It appears once, after the first installation, and stays in
+   the Notifications list until you dismiss it. This guide also opens from *Tools | OpenCollab |
+   User Guide* and from the *User guide* link in the tool window.
 
 New versions arrive like any other plugin update, with their changes on the plugin's page in
 *Settings | Plugins*. After an update, a message on the OpenCollab tool window names the new

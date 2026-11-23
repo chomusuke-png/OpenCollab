@@ -14,6 +14,8 @@ without its own section; the section becomes the release notes on GitHub and the
 
 ## [Unreleased]
 
+## [3.10.0] - 2026-11-23
+
 ### Added
 - **A new icon** for OpenCollab, on the plugin's page in *Settings | Plugins* and, simplified, on the tool window button in the side bar.
 

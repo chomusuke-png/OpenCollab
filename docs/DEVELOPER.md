@@ -58,7 +58,10 @@ buildPlugin` (all modules and their tests) and then `:plugin:verifyPlugin`, on L
 and 25. It checks out the full history because the version comes from the release tags. A second
 job builds the relay's Docker image, checks the compose files (also with `compose.build.yml`) and
 starts the image twice on one volume to see that TLS answers with the printed fingerprint and that
-the kept certificate survives a restart. When a run fails, the test reports are attached to it;
+the kept certificate survives a restart. It then runs both installers (`relay-server/install.sh`,
+and `install.ps1` under PowerShell 7) with that image and this checkout's compose files: the
+fingerprint they print must be the one served, and running them again must keep the secret and
+the certificate. When a run fails, the test reports are attached to it;
 every run attaches the built plugin ZIP. Release only from a commit whose run passed.
 
 `.github/workflows/relay-image.yml` runs when a GitHub release is published (by

@@ -72,6 +72,12 @@ debugger stopping) stays in the OpenCollab tool window, as a short message on it
    the copied text (`oc1:…`) to the
    participant over a private channel (direct message, password manager share…). **An invitation
    is a secret**: anybody holding it can ask to join with that role.
+
+   **Who can use it:** when every address in the invitation is private (your home or office
+   network, `192.168.x.x`, `10.x.x.x`…) or only this computer (`127.0.0.1`), the tool window says
+   so under the session time, with a link to the connection settings, and copying the invitation
+   says it again. Then only people on your network or VPN can join; for anyone else, set up the
+   relay or port forwarding first (see [below](#inviting-a-remote-participant-different-network)).
 4. When someone uses it, a notification shows their name, role and (partly hidden) address: click
    **Let in** or **Reject**. The same requests are listed at the top of the tool window under
    *Waiting to join*, in case you miss the notification. Unanswered requests are refused after 2 minutes, and at most 5 people can wait at

@@ -28,6 +28,7 @@ import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.ui.Messages
 import com.intellij.ui.layout.or
 import dev.opencollab.plugin.session.CollabSessionService
+import dev.opencollab.transport.NetworkHints
 import javax.swing.JComponent
 
 /** Settings | Tools | OpenCollab. */
@@ -209,7 +210,18 @@ class OpenCollabConfigurable : BoundConfigurable(message("configurable.name")) {
                         row(message("settings.relay.url")) {
                             cell(addressField()).bindText(s::relayUrl).columns(COLUMNS_LARGE).comment("wss://relay.example.com:8443", MAX_LINE_LENGTH_WORD_WRAP)
                                 .validationOnApply {
-                                    if (relayEnabled.component.isSelected && !String(it.password).trim().startsWith("wss://")) error(message("settings.relay.url.invalid")) else null
+                                    val url = String(it.password).trim()
+                                    when {
+                                        !relayEnabled.component.isSelected -> null
+                                        !url.startsWith("wss://") -> error(message("settings.relay.url.invalid"))
+                                        // The URL goes into invitations: guests must be able to reach it.
+                                        else -> when (NetworkHints.reachOfUrl(url)) {
+                                            NetworkHints.Reach.NOBODY -> error(message("settings.relay.url.unspecified"))
+                                            NetworkHints.Reach.THIS_COMPUTER -> warning(message("settings.relay.url.self"))
+                                            NetworkHints.Reach.LOCAL_NETWORK -> warning(message("settings.relay.url.local"))
+                                            NetworkHints.Reach.INTERNET -> null
+                                        }
+                                    }
                                 }
                         }.enabledIf(relayEnabled.selected)
                         row(message("settings.relay.fingerprint")) {

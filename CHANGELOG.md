@@ -14,6 +14,8 @@ without its own section; the section becomes the release notes on GitHub and the
 
 ## [Unreleased]
 
+## [3.11.0] - 2026-11-23
+
 ### Added
 - **The host learns who can use an invitation before sending it:** when all its addresses are
   private (or only this computer), the tool window says that only people on your network can

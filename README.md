@@ -89,9 +89,9 @@ changelog has no section for the version.
 Publishing the release also starts the *Relay image* workflow, which publishes the relay server
 image `ghcr.io/chomusuke-png/opencollab-relay` with the tags `X.Y.Z`, `X.Y`, `X` and `latest`. To
 publish the image of an existing release, run that workflow by hand (*Actions | Relay image | Run
-workflow*) with its tag. After the first image, make the package public once, in *Package
-settings | Change visibility* on the package's page on GitHub; until then nobody can download it
-without logging in.
+workflow*) with its tag. The package is linked to this public repository and is public too, so
+anyone can download it without logging in; check *Package settings | Change visibility* on the
+package's page if that ever changes.
 
 Installed copies update themselves: on first start the plugin adds
 `https://github.com/chomusuke-png/OpenCollab/releases/latest/download/updatePlugins.xml` to

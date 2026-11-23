@@ -56,11 +56,17 @@ details) and messages sent over the network stay in English.
 `.github/workflows/ci.yml` runs on every push to `main` and every pull request: `./gradlew check
 buildPlugin` (all modules and their tests) and then `:plugin:verifyPlugin`, on Linux with Java 21
 and 25. It checks out the full history because the version comes from the release tags. A second
-job builds the relay's Docker image, checks both compose files and starts the image twice on one
-volume to see that TLS answers with the printed fingerprint and that the kept certificate survives
-a restart. When a
-run fails, the test reports are attached to it; every run attaches the built plugin ZIP. Release
-only from a commit whose run passed.
+job builds the relay's Docker image, checks the compose files (also with `compose.build.yml`) and
+starts the image twice on one volume to see that TLS answers with the printed fingerprint and that
+the kept certificate survives a restart. When a run fails, the test reports are attached to it;
+every run attaches the built plugin ZIP. Release only from a commit whose run passed.
+
+`.github/workflows/relay-image.yml` runs when a GitHub release is published (by
+`:plugin:publishRelease`), or by hand with a release tag. It builds the relay image from that tag,
+runs the same TLS smoke test, and pushes it to `ghcr.io/chomusuke-png/opencollab-relay` for
+`linux/amd64` and `linux/arm64` with the tags `X.Y.Z`, `X.Y`, `X` and, for a release, `latest`.
+The JAR is built once on the runner's platform (`--platform=$BUILDPLATFORM` in the Dockerfile);
+only the runtime layer differs per platform.
 
 ### Trying it with two IDEs on one machine
 
@@ -151,6 +157,7 @@ Automatic port forwarding lives in `transport/.../router` and uses only the JDK 
 | `plugin` `RouterForwardingTest` | the setting is off by default and saved; off never asks the router; a mapped port is invited and removed when hosting ends or the setting is turned off; a failing or missing router does not stop hosting and manual forwarding still applies |
 | `plugin` `PortForwardingAndJoinTest` | plugin host with port forwarding advertises `wss://<public>:<port>` and a guest joins using only that endpoint; port 0 refused with forwarding; pending join completes when the new project opens; suggested folder avoids non-empty folders |
 | `plugin` `BundleTest` | English/Spanish key parity, placeholders, apostrophe rules, keys used in code exist, Spanish resolution |
+| `plugin` `WhatsNewTest`, `WelcomeTest` | the update notice appears once per newer release, never for development builds or the first installation; the welcome with the user guide appears once after the first installation and never after an update |
 | `plugin` `CollabPanelTest` | the bottom tabs (chat, activity, host) stay in the tool window when leaving and joining again |
 | `plugin` `SharedTestTreeTest` | test events in the host's format build IntelliJ's test tree on a guest (suite, passed and failed tests, failure message) and locate the failing test on its line in the guest's copy |
 | `relay-server` `RelayServerTest` | end-to-end encrypted relay messaging (relay logs never contain content), wrong host secret, unknown room, impostor host behind relay, relay certificate pinning, room capacity, host disconnect |

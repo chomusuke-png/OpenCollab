@@ -19,6 +19,7 @@ addresses, your user folder, the project path and participants' names hidden.
 | *The host started a new session; join again* | The host ended and restarted hosting. Joining the same folder again only downloads what changed |
 | Host: *Relay refused registration: invalid relay secret* | The relay host secret in settings does not match the relay's `--host-secret-file` |
 | Host: *Cannot connect to wss://relay…: TLS certificate rejected* | Self-signed relay: copy the fingerprint printed by the relay into *Relay certificate fingerprint*. CA relay: check the host name in the URL matches the certificate |
+| Relay server: `docker compose up` says *manifest unknown* or *not found* | `OPENCOLLAB_VERSION` names a version that has no image: use `latest`, a major version such as `3`, or a released `X.Y.Z` (images exist from 3.9.0 on). To build from source instead, add `-f compose.build.yml` (see [RELAY_SERVER.md](RELAY_SERVER.md#building-the-image-yourself)) |
 | Guest via relay: *connection closed (unknown room or host offline)* | The host is not connected to the relay (yet), or the room expired. Ask the host for a new invitation |
 | Edits from a guest are reverted immediately | The guest is a viewer, or the file is read-only for guests (run configurations, wrapper scripts, CI files). The host can change the role (right-click > *Make Editor*) |
 | *Host refused write …: The host has unsaved changes* | A guest tried to replace a file (outside the editor) that the host is editing. Open the file in the editor instead |

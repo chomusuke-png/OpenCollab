@@ -13,8 +13,9 @@ Linux.
    [latest release](https://github.com/chomusuke-png/OpenCollab/releases/latest). Do not unzip it.
 2. In IntelliJ: *Settings | Plugins | ⚙ (gear) | Install Plugin from Disk…*, pick the ZIP and
    restart if asked.
-3. An **OpenCollab** tool window appears on the right. New versions install like any plugin
-   update, so you only do this once.
+3. An **OpenCollab** tool window appears on the right, and a welcome notice with a link to the
+   [user guide](USER_GUIDE.md). New versions install like any plugin update, so you only do
+   this once.
 
 ## Connecting
 
@@ -23,6 +24,7 @@ Pick the way that fits where you both are:
 | You are | Use |
 |---|---|
 | On the same network (home, office) | Nothing to set up: the host clicks **Share this project** |
+| On different networks, the host's router has UPnP or NAT-PMP | Host: *Settings \| Tools \| OpenCollab \| Port forwarding*, *Automatically configure my router*. Please report what the *Router* line says, whether it works or not: it has not been tried on many routers yet |
 | On different networks, the host can open a port on their router | Host: *Settings \| Tools \| OpenCollab \| Port forwarding* |
 | On different networks, with a relay | Host: *Settings \| Tools \| OpenCollab \| Relay* (URL, secret and maybe a fingerprint from whoever runs it) |
 | On the same VPN (Tailscale, ZeroTier, …) | Like the same network |

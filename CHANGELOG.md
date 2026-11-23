@@ -14,6 +14,8 @@ without its own section; the section becomes the release notes on GitHub and the
 
 ## [Unreleased]
 
+## [3.12.0] - 2026-11-23
+
 ### Added
 - A [privacy policy](docs/PRIVACY.md): what OpenCollab sends where (no telemetry, no servers of
   ours) and what it stores.

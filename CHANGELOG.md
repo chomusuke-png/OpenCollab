@@ -14,6 +14,10 @@ without its own section; the section becomes the release notes on GitHub and the
 
 ## [Unreleased]
 
+### Changed
+- The plugin's author in *Settings | Plugins* is now **chomusuke-png & hi444** instead of
+  "OpenCollab contributors".
+
 ## [3.10.0] - 2026-11-23
 
 ### Added

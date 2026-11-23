@@ -121,7 +121,7 @@ intellijPlatform {
         """.trimIndent()
         changeNotes = changeNotesHtml
         vendor {
-            name = "OpenCollab contributors"
+            name = "chomusuke-png & hi444"
         }
         ideaVersion {
             sinceBuild = "262"
@@ -182,7 +182,7 @@ val updatePluginsXml = tasks.register("updatePluginsXml") {
                 <plugin id="dev.opencollab" url="$zipUrl" version="$version">
                     <idea-version since-build="262"/>
                     <name>OpenCollab</name>
-                    <vendor>OpenCollab contributors</vendor>
+                    <vendor>chomusuke-png &amp; hi444</vendor>
                     <description>Real-time collaboration for IntelliJ IDEA without Remote Development.</description>
                     <change-notes><![CDATA[$notes]]></change-notes>
                 </plugin>

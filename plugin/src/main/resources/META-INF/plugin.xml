@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>dev.opencollab</id>
     <name>OpenCollab</name>
-    <vendor>OpenCollab contributors</vendor>
+    <vendor>chomusuke-png &amp; hi444</vendor>
 
     <!-- Platform core only: works with the free features of IntelliJ IDEA. -->
     <depends>com.intellij.modules.platform</depends>

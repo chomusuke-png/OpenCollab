@@ -14,6 +14,8 @@ without its own section; the section becomes the release notes on GitHub and the
 
 ## [Unreleased]
 
+## [3.9.0] - 2026-11-22
+
 ### Added
 - **Relay image on GitHub:** each release publishes the relay server as
   `ghcr.io/chomusuke-png/opencollab-relay` (amd64 and arm64). The compose files use it, so a

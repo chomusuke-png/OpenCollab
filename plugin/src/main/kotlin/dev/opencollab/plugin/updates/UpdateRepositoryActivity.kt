@@ -12,11 +12,13 @@ import dev.opencollab.plugin.ui.PanelNotice
 /**
  * Adds OpenCollab's release feed to the IDE's custom plugin repositories, so new versions show up
  * as ordinary plugin updates. Done once per IDE: if the user removes the repository, it stays removed.
- * After an update, says which version is now installed, with a link to what is new in it.
+ * After an update, says which version is now installed, with a link to what is new in it; after
+ * the first installation, welcomes the user with the user guide.
  */
 class UpdateRepositoryActivity : ProjectActivity {
     override suspend fun execute(project: Project) {
         val properties = PropertiesComponent.getInstance()
+        var firstInstallation = false
         val announce = synchronized(UpdateRepositoryActivity::class.java) {
             // Set by every version since the first release, so it also tells an update apart
             // from a first installation for those that did not record their version yet.
@@ -25,9 +27,12 @@ class UpdateRepositoryActivity : ProjectActivity {
                 val hosts = UpdateSettings.getInstance().storedPluginHosts
                 if (URL !in hosts) hosts.add(URL)
                 properties.setValue(REGISTERED_KEY, true)
+                firstInstallation = true
             }
             WhatsNew.recordVersion(properties, Diagnostics.pluginVersion(), installedBefore)
         }
+        // Once per IDE, in the first project that opens; never again after an update.
+        if (firstInstallation) UserGuide.welcome(project)
         announce?.let { WhatsNew.notifyUpdated(project, it) }
     }
 

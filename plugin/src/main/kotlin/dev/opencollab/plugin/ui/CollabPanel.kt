@@ -97,7 +97,10 @@ class CollabPanel(private val project: Project, parent: Disposable) : JPanel(Bor
                 .applyToComponent { icon = AllIcons.Actions.Download }
         }
         row { comment(message("welcome.join.description")) }
-        row { link(message("welcome.settings")) { openSettings() } }
+        row {
+            link(message("welcome.guide")) { dev.opencollab.plugin.updates.UserGuide.open() }
+            link(message("welcome.settings")) { openSettings() }
+        }
         row { cell(lastStatus) }
     }.apply { border = JBUI.Borders.empty(4, 2, 8, 2) }
     private val idleView = JPanel(BorderLayout())

@@ -57,6 +57,10 @@ configurations.named("runtimeClasspath") {
 // (and "## [Unreleased]" for what is not released yet). Parsed here, at configuration time, into
 // plain strings, so the tasks below keep no reference to the script.
 val releaseRepository = "chomusuke-png/OpenCollab"
+
+// -Pmarketplace builds the plugin for the JetBrains Marketplace: it then gets its updates from the
+// Marketplace and never adds the GitHub release feed to the IDE's plugin repositories.
+val marketplace: Boolean = providers.gradleProperty("marketplace").map { it != "false" }.getOrElse(false)
 val changelogSections: Map<String, String> = run {
     val text = providers.fileContents(rootProject.layout.projectDirectory.file("CHANGELOG.md")).asText.orNull.orEmpty()
         .replace("\r\n", "\n").replace(Regex("(?s)<!--.*?-->"), "")
@@ -113,15 +117,36 @@ intellijPlatform {
         id = "dev.opencollab"
         name = "OpenCollab"
         version = project.version.toString()
+        // The plugin's page on the JetBrains Marketplace and in Settings | Plugins (HTML).
         description = """
-            Real-time collaboration for IntelliJ IDEA without Remote Development: a host shares
-            the authoritative project, guests edit together from their own IDE installations,
-            with live cursors, selections, file synchronisation and host-enforced permissions.
-            Direct TLS connections or a self-hosted relay with end-to-end TLS.
+            <p>Real-time collaboration between separate IDE installations, with no account and no
+            Remote Development. A host shares a project; guests edit it together from their own
+            IDE, with their own settings and plugins.</p>
+            <ul>
+              <li><b>Edit together</b>: live editing of the same files, with everyone's cursors and
+                selections, file synchronisation and chat.</li>
+              <li><b>See the host's IDE</b>: runs, builds and test results, where the debugger
+                stopped, breakpoints, the Git branch and changed files, and the code style.</li>
+              <li><b>The host decides</b>: invitations are secrets, the host lets each person in,
+                and roles (editor or viewer) are enforced on the host. Guests can ask to run a
+                configuration, a build or a command; the host approves each request.</li>
+              <li><b>Connect your way</b>: directly on a network or VPN, through port forwarding
+                (optionally set up on the router automatically with UPnP / NAT-PMP), or through a
+                self-hosted relay. Connections are TLS-encrypted, end to end through the relay.</li>
+              <li><b>Private</b>: no servers of ours, no accounts, no telemetry.</li>
+            </ul>
+            <p><b>Getting started</b>: open the <i>OpenCollab</i> tool window on the right and click
+            <i>Share this project</i>, then <i>Invite</i> to copy an invitation and send it
+            privately. A guest opens an empty folder as a project, clicks <i>Join with an
+            invitation</i> and pastes it. Works with the free features of IntelliJ IDEA.</p>
+            <p><a href="https://github.com/chomusuke-png/OpenCollab/blob/main/docs/USER_GUIDE.md">User guide</a> ·
+            <a href="https://github.com/chomusuke-png/OpenCollab/blob/main/docs/PRIVACY.md">Privacy policy</a></p>
         """.trimIndent()
         changeNotes = changeNotesHtml
         vendor {
             name = "chomusuke-png & hi444"
+            email = "owokenji@gmail.com"
+            url = "https://github.com/chomusuke-png"
         }
         ideaVersion {
             sinceBuild = "262"
@@ -132,6 +157,18 @@ intellijPlatform {
         ides {
             create(org.jetbrains.intellij.platform.gradle.IntelliJPlatformType.IntellijIdea, providers.gradleProperty("platformVersion"))
         }
+    }
+    // JetBrains Marketplace (docs/MARKETPLACE.md). The key and token come from the environment and
+    // are never stored in the repository:
+    //   OPENCOLLAB_CERTIFICATE_CHAIN, OPENCOLLAB_PRIVATE_KEY (PEM text), OPENCOLLAB_PRIVATE_KEY_PASSWORD
+    //   OPENCOLLAB_MARKETPLACE_TOKEN (a permanent token from the Marketplace profile)
+    signing {
+        certificateChain = providers.environmentVariable("OPENCOLLAB_CERTIFICATE_CHAIN")
+        privateKey = providers.environmentVariable("OPENCOLLAB_PRIVATE_KEY")
+        password = providers.environmentVariable("OPENCOLLAB_PRIVATE_KEY_PASSWORD")
+    }
+    publishing {
+        token = providers.environmentVariable("OPENCOLLAB_MARKETPLACE_TOKEN")
     }
     buildSearchableOptions = false
     // Optional short sandbox location (-PsandboxDir=C:/oc-sandbox). On Windows a checkout in a
@@ -151,11 +188,22 @@ tasks {
     test {
         systemProperty("idea.force.use.core.classloader", "true")
     }
-    // The plugin's version for its diagnostics (the IDE's own lookups are internal API).
+    // Only the Marketplace build goes to the Marketplace: a GitHub build would add the GitHub
+    // release feed to its users' IDEs.
+    publishPlugin {
+        val isMarketplaceBuild = marketplace
+        doFirst {
+            if (!isMarketplaceBuild) throw GradleException("Publish the Marketplace build: ./gradlew :plugin:publishPlugin -Pmarketplace")
+        }
+    }
+    // The plugin's version for its diagnostics (the IDE's own lookups are internal API), and
+    // where this build is distributed (see marketplace below).
     processResources {
         val version = project.version.toString()
+        val distribution = if (marketplace) "marketplace" else "github"
         inputs.property("version", version)
-        filesMatching("opencollab-build.properties") { expand("version" to version) }
+        inputs.property("distribution", distribution)
+        filesMatching("opencollab-build.properties") { expand("version" to version, "distribution" to distribution) }
     }
 }
 
@@ -182,7 +230,7 @@ val updatePluginsXml = tasks.register("updatePluginsXml") {
                 <plugin id="dev.opencollab" url="$zipUrl" version="$version">
                     <idea-version since-build="262"/>
                     <name>OpenCollab</name>
-                    <vendor>chomusuke-png &amp; hi444</vendor>
+                    <vendor email="owokenji@gmail.com" url="https://github.com/chomusuke-png">chomusuke-png &amp; hi444</vendor>
                     <description>Real-time collaboration for IntelliJ IDEA without Remote Development.</description>
                     <change-notes><![CDATA[$notes]]></change-notes>
                 </plugin>

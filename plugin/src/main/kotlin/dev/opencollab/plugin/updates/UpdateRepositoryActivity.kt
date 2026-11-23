@@ -12,6 +12,8 @@ import dev.opencollab.plugin.ui.PanelNotice
 /**
  * Adds OpenCollab's release feed to the IDE's custom plugin repositories, so new versions show up
  * as ordinary plugin updates. Done once per IDE: if the user removes the repository, it stays removed.
+ * Not in a Marketplace build (-Pmarketplace): the Marketplace delivers its updates, and the feed
+ * an earlier GitHub build added is removed again.
  * After an update, says which version is now installed, with a link to what is new in it; after
  * the first installation, welcomes the user with the user guide.
  */
@@ -24,11 +26,16 @@ class UpdateRepositoryActivity : ProjectActivity {
             // from a first installation for those that did not record their version yet.
             val installedBefore = properties.getBoolean(REGISTERED_KEY)
             if (!installedBefore) {
-                val hosts = UpdateSettings.getInstance().storedPluginHosts
-                if (URL !in hosts) hosts.add(URL)
+                if (!Diagnostics.fromMarketplace()) {
+                    val hosts = UpdateSettings.getInstance().storedPluginHosts
+                    if (URL !in hosts) hosts.add(URL)
+                }
                 properties.setValue(REGISTERED_KEY, true)
                 firstInstallation = true
             }
+            // Installed from the Marketplace, which delivers the updates: the GitHub feed that an
+            // earlier GitHub build added would only offer the same versions a second way.
+            if (Diagnostics.fromMarketplace()) UpdateSettings.getInstance().storedPluginHosts.remove(URL)
             WhatsNew.recordVersion(properties, Diagnostics.pluginVersion(), installedBefore)
         }
         // Once per IDE, in the first project that opens; never again after an update.

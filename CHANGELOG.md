@@ -14,6 +14,12 @@ without its own section; the section becomes the release notes on GitHub and the
 
 ## [Unreleased]
 
+### Added
+- A [privacy policy](docs/PRIVACY.md): what OpenCollab sends where (no telemetry, no servers of
+  ours) and what it stores.
+- The plugin's page in *Settings | Plugins* describes what it does and how to start, and names
+  the authors' email and website.
+
 ## [3.11.0] - 2026-11-23
 
 ### Added

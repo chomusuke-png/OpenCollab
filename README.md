@@ -31,6 +31,8 @@ other's cursors and selections, and navigate the project in their own IDE.
 | [docs/DEVELOPER.md](docs/DEVELOPER.md) | Build, test, run, architecture, module layout |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | Wire protocol and synchronisation algorithm |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat model, what is protected, known limits |
+| [docs/PRIVACY.md](docs/PRIVACY.md) | Privacy policy: what is sent where, and what is stored |
+| [docs/MARKETPLACE.md](docs/MARKETPLACE.md) | Publishing on the JetBrains Marketplace: signing, first upload, updates |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common problems and fixes |
 
 ## Quick start

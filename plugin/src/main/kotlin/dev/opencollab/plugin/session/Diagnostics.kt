@@ -31,7 +31,7 @@ object Diagnostics {
         val roles = participants.groupingBy { it.role.name.lowercase() }.eachCount().entries.joinToString { "${it.value} ${it.key}" }
         val text = buildString {
             appendLine("OpenCollab diagnostics")
-            appendLine("Plugin: $plugin (protocol $PROTOCOL_VERSION)")
+            appendLine("Plugin: $plugin (protocol $PROTOCOL_VERSION, ${if (fromMarketplace()) "JetBrains Marketplace" else "GitHub"} build)")
             appendLine("IDE: ${app.fullApplicationName} (${app.build.asString()})")
             appendLine("OS: ${System.getProperty("os.name")} ${System.getProperty("os.version")} (${System.getProperty("os.arch")})")
             appendLine("Java: ${System.getProperty("java.runtime.version") ?: System.getProperty("java.version")} (${System.getProperty("java.vendor")})")
@@ -84,11 +84,16 @@ object Diagnostics {
     }
 
     /** Written into the plugin's resources by the build. */
-    fun pluginVersion(): String = runCatching {
+    fun pluginVersion(): String = buildProperty("version") ?: "?"
+
+    /** True for a build made for the JetBrains Marketplace (-Pmarketplace), which updates from there. */
+    fun fromMarketplace(): Boolean = buildProperty("distribution") == "marketplace"
+
+    private fun buildProperty(name: String): String? = runCatching {
         Diagnostics::class.java.getResourceAsStream("/opencollab-build.properties")!!.use { stream ->
-            java.util.Properties().apply { load(stream) }.getProperty("version")
+            java.util.Properties().apply { load(stream) }.getProperty(name)
         }
-    }.getOrNull()?.takeIf { it.isNotBlank() && !it.startsWith("$") } ?: "?"
+    }.getOrNull()?.takeIf { it.isNotBlank() && !it.startsWith("$") }
 
     private fun onOff(on: Boolean) = if (on) "on" else "off"
 

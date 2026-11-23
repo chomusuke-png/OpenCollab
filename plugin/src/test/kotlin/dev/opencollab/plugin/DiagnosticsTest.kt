@@ -35,6 +35,9 @@ class DiagnosticsTest : BasePlatformTestCase() {
         assertTrue(report, report.startsWith("OpenCollab diagnostics"))
         assertTrue(report, report.contains("Plugin: ${Diagnostics.pluginVersion()} "))
         assertTrue(Diagnostics.pluginVersion(), Diagnostics.pluginVersion().first().isDigit())
+        // Tests run a GitHub build (no -Pmarketplace), which keeps the GitHub release feed.
+        assertFalse(Diagnostics.fromMarketplace())
+        assertTrue(report, report.contains("GitHub build"))
         assertTrue(report, report.contains("Session: not in a session"))
         assertFalse(report, report.contains("secret", ignoreCase = true))
     }
